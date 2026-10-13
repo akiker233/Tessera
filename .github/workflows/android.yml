@@ -64,10 +64,11 @@ jobs:
       - name: 单元测试 + 构建 debug APK
         run: ./gradlew :app:testDebugUnitTest :app:assembleDebug $GRADLE_ARGS
 
+      # 只传 universal 包：debug 未压缩，5 个 ABI 包合计近 500MB，而 universal 一份就能在任何设备/模拟器安装
       - uses: actions/upload-artifact@v7
         with:
           name: tessera-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/debug/app-universal-debug.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -136,16 +137,27 @@ jobs:
         run: |
           set -euo pipefail
           APKSIGNER=$(ls -1 "$ANDROID_SDK_ROOT"/build-tools/*/apksigner | sort -V | tail -1)
-          "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/app-release.apk | head -5
+          for apk in app/build/outputs/apk/release/*.apk; do
+            echo "== $apk"
+            "$APKSIGNER" verify --print-certs "$apk" | head -2
+          done
 
+      # ABI 拆分后产物为 app-<abi>-release.apk（含 app-universal-release.apk），
+      # 统一改名成 Tessera-<tag>-<abi>.apk 再挂到 Release
       - name: 归档产物并创建 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          cp app/build/outputs/apk/release/app-release.apk "Tessera-${{ github.ref_name }}.apk"
-          gh release create "${{ github.ref_name }}" \
-            "Tessera-${{ github.ref_name }}.apk" \
+          mkdir -p dist
+          for apk in app/build/outputs/apk/release/*.apk; do
+            base=$(basename "$apk")
+            abi=${base#app-}
+            abi=${abi%-release.apk}
+            cp "$apk" "dist/Tessera-${{ github.ref_name }}-$abi.apk"
+          done
+          ls -lh dist
+          gh release create "${{ github.ref_name }}" dist/*.apk \
             --title "${{ github.ref_name }}" \
             --generate-notes
 

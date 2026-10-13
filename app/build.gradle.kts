@@ -69,6 +69,17 @@ android {
         }
     }
 
+    // 按 ABI 拆分：SQLCipher 与 ML Kit 的原生库只打进对应架构的包，省掉其余架构的体积；
+    // 仍保留 universal 包，方便不确定架构时直接安装（也便于模拟器/真机共用一份）
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            isUniversalApk = true
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
