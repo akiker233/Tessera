@@ -107,14 +107,13 @@ class SyncViewModel(
         viewModelScope.launch { settings.setEnabledProviders(next) }
     }
 
-    /** 参与同步的后端：勾选了就用勾选的，否则只用当前选中的那个。 */
+    /** 参与同步的后端：当前选中的始终参与，勾选的后端与它一起读写。 */
     private fun activeTypes(settings: AppSettings): List<SyncProviderType> {
+        val current = runCatching { SyncProviderType.valueOf(settings.syncProvider) }.getOrDefault(SyncProviderType.NONE)
         val enabled = settings.enabledProviders
             .mapNotNull { runCatching { SyncProviderType.valueOf(it) }.getOrNull() }
-            .filter { it != SyncProviderType.NONE }
-        if (enabled.isNotEmpty()) return enabled
-        val current = runCatching { SyncProviderType.valueOf(settings.syncProvider) }.getOrDefault(SyncProviderType.NONE)
-        return if (current == SyncProviderType.NONE) emptyList() else listOf(current)
+            .filter { it != SyncProviderType.NONE && it != current }
+        return if (current == SyncProviderType.NONE) enabled else listOf(current) + enabled
     }
 
     fun selectProvider(type: SyncProviderType) {

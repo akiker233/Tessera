@@ -83,12 +83,34 @@ fun SyncScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("云同步", style = MaterialTheme.typography.titleLarge)
         Text(
             text = "云端保存的是加密文件，只有同步口令能解开；请用足够强的口令，换机时输入同一口令即可恢复。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        Text("同步状态", style = MaterialTheme.typography.labelLarge)
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Column(Modifier.padding(12.dp)) {
+                Text(state.lastStatus, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = if (state.lastSyncAt > 0) "上次成功：" + formatTime(state.lastSyncAt) else "还没有成功同步记录",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (state.gistId.isNotBlank()) {
+                    Text("Gist ID：" + state.gistId, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        Button(onClick = onSyncNow, enabled = !state.running, modifier = Modifier.fillMaxWidth()) {
+            Text(if (state.running) "同步中…" else "立即同步")
+        }
+
+        state.message?.let { message ->
+            Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+        }
 
         Text("同步方式", style = MaterialTheme.typography.labelLarge)
         FlowRow(
@@ -136,7 +158,7 @@ fun SyncScreen(
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = "勾选的后端会在每次同步时一起读写；都不勾选时只同步当前选择的后端。",
+                    text = "当前选择的后端默认参与同步；勾选的后端会在每次同步时与它一起读写。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -147,7 +169,7 @@ fun SyncScreen(
                     SyncProviderType.GITEE,
                     SyncProviderType.GOOGLE_DRIVE,
                     SyncProviderType.ONEDRIVE
-                ).forEach { type ->
+                ).filter { it != state.provider }.forEach { type ->
                     val checked = type.name in state.enabledProviders
                     Row(
                         modifier = Modifier
@@ -208,28 +230,6 @@ fun SyncScreen(
             }
         }
 
-        Button(onClick = onSyncNow, enabled = !state.running, modifier = Modifier.fillMaxWidth()) {
-            Text(if (state.running) "同步中…" else "立即同步")
-        }
-
-        Text("同步状态", style = MaterialTheme.typography.labelLarge)
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-            Column(Modifier.padding(12.dp)) {
-                Text(state.lastStatus, style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    text = if (state.lastSyncAt > 0) "上次成功：" + formatTime(state.lastSyncAt) else "还没有成功同步记录",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (state.gistId.isNotBlank()) {
-                    Text("Gist ID：" + state.gistId, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-
-        state.message?.let { message ->
-            Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-        }
     }
 
     if (showPassphraseDialog) {
@@ -341,11 +341,13 @@ private fun GoogleDriveCard(
                     OutlinedButton(onClick = onSignOut) { Text("断开") }
                 }
             }
-            Text(
-                text = "需先在 Google Cloud 控制台启用 Drive API，并建 Android 类型 OAuth 客户端，登记当前包名 + SHA-1" +
-                    "（调试包为 com.tessera.otp.debug）；无需客户端 ID。详见 docs/google-drive-setup.md。",
-                style = MaterialTheme.typography.labelSmall
-            )
+            if (!connected) {
+                Text(
+                    text = "需先在 Google Cloud 控制台启用 Drive API，并建 Android 类型 OAuth 客户端，登记当前包名 + SHA-1" +
+                        "（调试包为 com.tessera.otp.debug）；无需客户端 ID。详见 docs/google-drive-setup.md。",
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
         }
     }
 }
@@ -442,11 +444,13 @@ private fun OneDriveCard(
                     OutlinedButton(onClick = onSignOut) { Text("断开") }
                 }
             }
-            Text(
-                text = "需先在 Azure 应用注册中登记重定向 URI tessera://auth 与委派权限 Files.ReadWrite.AppFolder，" +
-                    "再把客户端 ID 写入项目根目录 local.properties 的 ONEDRIVE_CLIENT_ID。",
-                style = MaterialTheme.typography.labelSmall
-            )
+            if (!state.oneDriveConnected) {
+                Text(
+                    text = "需先在 Azure 应用注册中登记重定向 URI tessera://auth 与委派权限 Files.ReadWrite.AppFolder，" +
+                        "再把客户端 ID 写入项目根目录 local.properties 的 ONEDRIVE_CLIENT_ID。",
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
         }
     }
 }
