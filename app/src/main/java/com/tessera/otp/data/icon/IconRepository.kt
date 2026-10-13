@@ -5,8 +5,8 @@ import kotlinx.serialization.json.Json
 import java.net.URLDecoder
 
 /**
- * 图标仓库：启动时加载 `assets/icon-index.json`（由 tools/gen_icon_index.ps1 从 icons/ 生成），
- * 运行时把 issuer 归一化成键查表，命中即可拿到 PNG 路径；未命中由 UI 显示字母头像。
+ * 图标仓库：启动时加载 `assets/icon-index.json`（由 tools/gen_icon_index.ps1 从 assets/icons 生成），
+ * 运行时把 issuer 归一化成键查表，命中即可拿到 WebP 路径；未命中由 UI 显示字母头像。
  */
 class IconRepository(private val context: Context) {
 
