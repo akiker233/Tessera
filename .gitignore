@@ -1,0 +1,26 @@
+# Gradle / build
+build/
+.gradle/
+.kotlin/
+local.properties
+
+# IDE
+/.idea
+*.iml
+.DS_Store
+
+# Native
+.externalNativeBuild
+.cxx
+/captures
+
+# Logs & crash dumps
+*.log
+hs_err_pid*
+
+# Local scratch / exports / test artifacts (may contain secrets or chat data)
+/exports
+/shots
+
+# Vendored third-party reference source (not part of Tessera)
+/2fas-android-6.0.3

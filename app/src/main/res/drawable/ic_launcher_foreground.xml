@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tessera 应用图标前景：白色 T 形令牌标记（内容位于 108dp 画布中央安全区内） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 横杠：stadium 形状，左右半圆收口 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36.5,33 H71.5 A7.5,7.5 0 0 1 79,40.5 A7.5,7.5 0 0 1 71.5,48 H36.5 A7.5,7.5 0 0 1 29,40.5 A7.5,7.5 0 0 1 36.5,33 Z" />
+    <!-- 竖杠：stadium 形状，上下半圆收口 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,33 A7.5,7.5 0 0 1 61.5,40.5 V68.5 A7.5,7.5 0 0 1 54,76 A7.5,7.5 0 0 1 46.5,68.5 V40.5 A7.5,7.5 0 0 1 54,33 Z" />
+</vector>
