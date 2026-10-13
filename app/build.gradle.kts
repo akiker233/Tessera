@@ -15,6 +15,14 @@ val localProperties = Properties().apply {
 }
 val onedriveClientId = localProperties.getProperty("ONEDRIVE_CLIENT_ID", "")
 
+// 签名信息从 keystore.properties（不入库）读取；文件不存在时 release 保持未签名，
+// 便于 CI/新克隆环境照常构建。
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val hasKeystore = keystoreProperties.getProperty("storeFile") != null
+
 android {
     namespace = "com.tessera.otp"
     // AndroidX 1.19+ 的 AAR 元数据要求 compileSdk >= 37；
@@ -35,6 +43,17 @@ android {
         vectorDrawables { useSupportLibrary = true }
     }
 
+    signingConfigs {
+        if (hasKeystore) {
+            create("release") {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -43,6 +62,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (hasKeystore) signingConfig = signingConfigs.getByName("release")
         }
         debug {
             applicationIdSuffix = ".debug"

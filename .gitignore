@@ -4,6 +4,11 @@ build/
 .kotlin/
 local.properties
 
+# Signing secrets
+keystore.properties
+*.jks
+*.keystore
+
 # IDE
 /.idea
 *.iml
@@ -21,6 +26,8 @@ hs_err_pid*
 # Local scratch / exports / test artifacts (may contain secrets or chat data)
 /exports
 /shots
+/ui.xml
+/*_dump.xml
 
 # Vendored third-party reference source (not part of Tessera)
 /2fas-android-6.0.3
