@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.tessera.otp.data.prefs.MULTI_INSTANCE_PROVIDER_ORDER
 import com.tessera.otp.data.prefs.SINGLETON_PROVIDER_ORDER
 import com.tessera.otp.data.prefs.SyncInterval
 import com.tessera.otp.data.prefs.SyncProviderType
@@ -154,7 +155,7 @@ fun SyncScreen(
                                 when (binding.type) {
                                     SyncProviderType.WEBDAV -> {
                                         webdavInitial = state.webdavServers
-                                            .firstOrNull { it.id == binding.webdavServerId }
+                                            .firstOrNull { it.id == binding.instanceId }
                                             ?: WebDavServer(id = "")
                                         editingWebDav = true
                                     }
@@ -173,7 +174,7 @@ fun SyncScreen(
                 OutlinedButton(onClick = { showAddPicker = true }) { Text("添加同步后端") }
                 Text(
                     text = "只有已绑定的后端会参与同步，可用左侧开关临时暂停；" +
-                        "WebDAV 可添加多台，各自指定云端文件名。",
+                        "WebDAV 可添加多台，Google Drive / OneDrive 也可添加多个账号，各自独立同步一份备份。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -401,17 +402,17 @@ private fun BindingRow(
     }
 }
 
-/** 「添加同步后端」选择窗：WebDAV 可多台，其余每种只能绑一个，已绑定的不再列出。 */
+/**
+ * 「添加同步后端」选择窗：多实例后端（WebDAV / Google Drive / OneDrive）可反复添加，
+ * 单实例后端（GitHub / Gist / Gitee）已绑定过就不再列出。
+ */
 @Composable
 private fun AddBackendDialog(
     boundTypes: Set<SyncProviderType>,
     onDismiss: () -> Unit,
     onPick: (SyncProviderType) -> Unit
 ) {
-    val options = buildList {
-        add(SyncProviderType.WEBDAV)
-        SINGLETON_PROVIDER_ORDER.forEach { if (it !in boundTypes) add(it) }
-    }
+    val options = MULTI_INSTANCE_PROVIDER_ORDER + SINGLETON_PROVIDER_ORDER.filterNot { it in boundTypes }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("添加同步后端") },
@@ -435,8 +436,8 @@ private fun AddBackendDialog(
 
 private fun addHint(type: SyncProviderType): String = when (type) {
     SyncProviderType.WEBDAV -> "自建或第三方的 WebDAV 目录，可添加多台并各自指定文件名"
-    SyncProviderType.GOOGLE_DRIVE -> "登录 Google 账号，只访问本应用的隐藏目录"
-    SyncProviderType.ONEDRIVE -> "登录微软账号，只访问本应用的私有文件夹"
+    SyncProviderType.GOOGLE_DRIVE -> "登录 Google 账号，只访问本应用的隐藏目录；可添加多个账号"
+    SyncProviderType.ONEDRIVE -> "登录微软账号，只访问本应用的私有文件夹；可添加多个账号"
     SyncProviderType.GITHUB -> "写入你自己的仓库文件（需要 Personal Access Token）"
     SyncProviderType.GIST -> "写入一个私有 Gist（需要 gist 权限的令牌）"
     SyncProviderType.GITEE -> "写入 Gitee 仓库文件（需要私人令牌）"

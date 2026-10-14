@@ -34,10 +34,10 @@ class GoogleDriveProvider(
     private val context: Context,
     /** 令牌提供者：每次调用取一个有效 access token（由 GoogleDriveAuth 静默续期）。 */
     private val tokenProvider: suspend () -> String?,
-    private val fileName: String = BACKUP_FILE_NAME
+    private val fileName: String = BACKUP_FILE_NAME,
+    /** 展示名：多账号时带上邮箱，便于在同步结果里区分是哪一个账号。 */
+    override val displayName: String = "Google Drive"
 ) : SyncProvider {
-
-    override val displayName = "Google Drive"
 
     /**
      * 注意：不再使用 `GoogleAccountCredential`。
@@ -137,16 +137,18 @@ class GoogleDriveProvider(
 }
 
 /**
- * OneDrive 后端（Microsoft Graph，appRoot 私有目录）。
+ * OneDrive 后端（Microsoft Graph，appRoot 私有目录）。**支持多个微软账号各同步一份备份**。
  *
  * 认证说明（需要在 Azure 门户配置后替换占位常量）：
- *  1. 注册应用，重定向 URI 用自定义 scheme（例如 msal<clientId>://auth）；
+ *  1. 注册应用，重定向 URI 用自定义 scheme（`tessera://auth`，与 [OneDriveAuth] 一致）；
  *  2. 把客户端 ID 写到项目根目录 local.properties 的 `ONEDRIVE_CLIENT_ID=`（经 BuildConfig 注入 [ONEDRIVE_CLIENT_ID]，不入库）；
- *  3. 用 MSAL 走交互式登录拿 accessToken，再调用 [setAccessToken]。
+ *  3. 登录由 [OneDriveAuth] 完成（OAuth 授权码 + PKCE），令牌按账号分别存取。
  */
-class OneDriveProvider(private var accessToken: String?) : SyncProvider {
-
-    override val displayName = "OneDrive"
+class OneDriveProvider(
+    private var accessToken: String?,
+    /** 展示名：多账号时带上邮箱，便于在同步结果里区分是哪一个账号。 */
+    override val displayName: String = "OneDrive"
+) : SyncProvider {
 
     fun setAccessToken(token: String?) { accessToken = token }
 

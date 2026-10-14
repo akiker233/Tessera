@@ -39,7 +39,6 @@ enum class SyncInterval(val minutes: Long, val label: String) {
     DAY_1(1440L, "1 天")
 }
 
-/** 同步后端类型。 */
 /** 主题模式（自动/浅色/深色）。 */
 enum class ThemeMode(val label: String) { AUTO("自动"), LIGHT("浅色"), DARK("深色") }
 
@@ -110,7 +109,9 @@ data class AppSettings(
     /**
      * 不参与同步的「已绑定后端」键集合。
      *
-     * 键的取值：单实例后端用 `SyncProviderType.name`，WebDAV 用 `WEBDAV:<服务器 id>`。
+     * 键的取值：单实例后端用 `SyncProviderType.name`；多实例后端用 `<类型>:<实例 id>`
+     * ——WebDAV 是服务器 id（[webdavBindingKey]），Google Drive / OneDrive 是账号邮箱
+     * （[googleDriveBindingKey]、[oneDriveBindingKey]）。
      * 空集合 = 所有已绑定的后端都参与同步（新绑定的后端默认参与）。
      */
     val disabledProviders: Set<String> = emptySet(),
@@ -122,6 +123,12 @@ data class AppSettings(
     val lastSyncPulled: Int = 0,
     /** 已配置的 WebDAV 服务器列表（可多个，各自启用）。 */
     val webdavServers: List<WebDavServer> = emptyList(),
+    /**
+     * 已绑定的 Google Drive 账号（邮箱）。可多个，各自独立同步一份备份。
+     *
+     * 令牌由 Play Services 托管、应用侧无法枚举，因此这里必须自己记录绑定了哪些账号。
+     */
+    val googleAccounts: List<String> = emptyList(),
     val githubOwnerRepo: String = "",
     val githubPath: String = "tessera.vault",
     val gistId: String = "",
@@ -129,7 +136,6 @@ data class AppSettings(
     val giteeOwnerRepo: String = "",
     val giteePath: String = "tessera.vault",
     val giteeToken: String = "",
-    val googleAccount: String = "",
     val gistToken: String = ""
 )
 
@@ -170,7 +176,9 @@ class SettingsRepository(private val context: Context) {
         val GITEE_OWNER_REPO = stringPreferencesKey("gitee_owner_repo")
         val GITEE_PATH = stringPreferencesKey("gitee_path")
         val GITEE_TOKEN = stringPreferencesKey("gitee_token")
-        val GOOGLE_ACCOUNT = stringPreferencesKey("google_account")
+        /** 旧版「Google 是否已授权」标记（内容是常量文案，不含邮箱）；仅用于迁移出账号列表。 */
+        val LEGACY_GOOGLE_ACCOUNT = stringPreferencesKey("google_account")
+        val GOOGLE_ACCOUNTS = stringPreferencesKey("google_accounts")
         val SYNC_ENABLED = booleanPreferencesKey("sync_enabled")
         val GIST_TOKEN = stringPreferencesKey("gist_token")
     }
@@ -198,6 +206,7 @@ class SettingsRepository(private val context: Context) {
             lastSyncPushed = p[Keys.LAST_SYNC_PUSHED] ?: 0,
             lastSyncPulled = p[Keys.LAST_SYNC_PULLED] ?: 0,
             webdavServers = readWebDavServers(p),
+            googleAccounts = readGoogleAccounts(p),
             githubOwnerRepo = p[Keys.GITHUB_OWNER_REPO] ?: "",
             githubPath = p[Keys.GITHUB_PATH] ?: "tessera.vault",
             gistId = p[Keys.GIST_ID] ?: "",
@@ -205,7 +214,6 @@ class SettingsRepository(private val context: Context) {
             giteeOwnerRepo = p[Keys.GITEE_OWNER_REPO] ?: "",
             giteePath = p[Keys.GITEE_PATH] ?: "tessera.vault",
             giteeToken = p[Keys.GITEE_TOKEN] ?: "",
-            googleAccount = p[Keys.GOOGLE_ACCOUNT] ?: "",
             gistToken = p[Keys.GIST_TOKEN] ?: ""
         )
     }
@@ -249,7 +257,11 @@ class SettingsRepository(private val context: Context) {
         it[Keys.GITEE_PATH] = path
         it[Keys.GITEE_TOKEN] = token
     }
-    suspend fun setGoogleAccount(account: String) = edit { it[Keys.GOOGLE_ACCOUNT] = account }
+    /** 保存整个 Google 账号列表；首次写入时清掉旧的「已授权」标记，避免迁移后又被读出来。 */
+    suspend fun setGoogleAccounts(accounts: List<String>) = edit {
+        it[Keys.GOOGLE_ACCOUNTS] = configJson.encodeToString(accounts)
+        it.remove(Keys.LEGACY_GOOGLE_ACCOUNT)
+    }
     suspend fun setGistToken(token: String) = edit { it[Keys.GIST_TOKEN] = token }
     suspend fun setSyncStatus(status: String, pushed: Int, pulled: Int, at: Long = System.currentTimeMillis()) = edit {
         it[Keys.LAST_SYNC_STATUS] = status
@@ -285,10 +297,24 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
+     * 读取已绑定的 Google 账号列表。
+     *
+     * 首次读取（新键不存在）时把旧版的「已授权」标记迁移成一条默认账号记录：
+     * 旧版只存了"授权过没有"，没记邮箱，所以用 [LEGACY_ACCOUNT_ID] 占位。
+     */
+    private fun readGoogleAccounts(p: Preferences): List<String> {
+        p[Keys.GOOGLE_ACCOUNTS]?.let { raw ->
+            return runCatching { configJson.decodeFromString<List<String>>(raw) }.getOrDefault(emptyList())
+        }
+        return if ((p[Keys.LEGACY_GOOGLE_ACCOUNT] ?: "").isNotBlank()) listOf(LEGACY_ACCOUNT_ID) else emptyList()
+    }
+
+    /**
      * 读取不参与同步的后端键集合。
      *
      * 新键存在时以它为准；否则（首次升级到新版）由旧字段一次性派生：
-     * 参与过同步的后端 =「当前选中的后端」∪「同时同步」勾选集合，其余单实例后端记为停用。
+     * 参与过同步的后端 =「当前选中的后端」∪「同时同步」勾选集合，其余单实例后端记为停用，
+     * 多实例后端则只对迁移出来的那一条默认记录生效（旧版每种后端最多一个）。
      * 全新安装（两个旧字段都不存在）不派生，保持"绑定即参与同步"。
      */
     private fun readDisabledProviders(p: Preferences): Set<String> {
@@ -296,11 +322,15 @@ class SettingsRepository(private val context: Context) {
         val legacyEnabled = p[Keys.LEGACY_ENABLED_PROVIDERS]
         val legacyProvider = p[Keys.LEGACY_SYNC_PROVIDER]
         if (legacyEnabled == null && legacyProvider == null) return emptySet()
-        val disabled = deriveDisabledProviders(legacyEnabled ?: emptySet(), legacyProvider ?: "").toMutableSet()
+        val active = legacyEnabled.orEmpty() + legacyProvider.orEmpty()
+        val disabled = deriveDisabledProviders(legacyEnabled.orEmpty(), legacyProvider.orEmpty()).toMutableSet()
         // 旧版单条 WebDAV 配置当时未被选中 → 迁移出的服务器默认不参与同步
-        if ((p[Keys.WEBDAV_URL] ?: "").isNotBlank() && legacyProvider != SyncProviderType.WEBDAV.name) {
+        if ((p[Keys.WEBDAV_URL] ?: "").isNotBlank() && SyncProviderType.WEBDAV.name !in active) {
             disabled += webdavBindingKey(LEGACY_WEBDAV_ID)
         }
+        // Google / OneDrive 同理：旧版没启用过就不让迁移出来的默认账号参与同步
+        if (SyncProviderType.GOOGLE_DRIVE.name !in active) disabled += googleDriveBindingKey(LEGACY_ACCOUNT_ID)
+        if (SyncProviderType.ONEDRIVE.name !in active) disabled += oneDriveBindingKey(LEGACY_ACCOUNT_ID)
         return disabled
     }
 
@@ -310,19 +340,47 @@ class SettingsRepository(private val context: Context) {
     }
 }
 
-/** 单实例后端（WebDAV 之外）的展示顺序，也是「添加同步后端」列表的顺序。 */
-val SINGLETON_PROVIDER_ORDER = listOf(
+/** 旧版单账号（Google Drive / OneDrive）迁移出的账号 id。 */
+const val LEGACY_ACCOUNT_ID = "legacy"
+
+/** 账号 id 的展示名：旧版迁移出来的记录没有邮箱，统一叫「默认账号」。 */
+fun accountDisplayName(id: String): String = if (id == LEGACY_ACCOUNT_ID) "默认账号" else id
+
+/**
+ * 多实例后端（每种可绑定多个服务器 / 账号），顺序即界面「添加同步后端」里的展示顺序。
+ *
+ * 它们的停用键是 `<类型>:<实例 id>`；单实例后端则直接用类型名。
+ */
+val MULTI_INSTANCE_PROVIDER_ORDER = listOf(
+    SyncProviderType.WEBDAV,
     SyncProviderType.GOOGLE_DRIVE,
-    SyncProviderType.ONEDRIVE,
+    SyncProviderType.ONEDRIVE
+)
+
+/** 单实例后端（每种只能绑一个）。 */
+val SINGLETON_PROVIDER_ORDER = listOf(
     SyncProviderType.GITHUB,
     SyncProviderType.GIST,
     SyncProviderType.GITEE
 )
 
-/** WebDAV 是多实例后端，每个服务器的停用键都带这个前缀。 */
+/** 「添加同步后端」里可选服务的顺序（多实例在前）。 */
+val ADD_PROVIDER_ORDER = MULTI_INSTANCE_PROVIDER_ORDER + SINGLETON_PROVIDER_ORDER
+
+/** WebDAV 每个服务器一条绑定，键带这个前缀。 */
 const val WEBDAV_BINDING_PREFIX = "WEBDAV:"
 
+/** Google Drive 每个账号一条绑定，键带这个前缀。 */
+const val GOOGLE_DRIVE_BINDING_PREFIX = "GOOGLE_DRIVE:"
+
+/** OneDrive 每个账号一条绑定，键带这个前缀。 */
+const val ONEDRIVE_BINDING_PREFIX = "ONEDRIVE:"
+
 fun webdavBindingKey(serverId: String): String = WEBDAV_BINDING_PREFIX + serverId
+
+fun googleDriveBindingKey(accountId: String): String = GOOGLE_DRIVE_BINDING_PREFIX + accountId
+
+fun oneDriveBindingKey(accountId: String): String = ONEDRIVE_BINDING_PREFIX + accountId
 
 /**
  * 旧版配置的一次性派生：参与同步的后端 =「当前选中」∪「同时同步」勾选，

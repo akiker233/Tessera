@@ -4,12 +4,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkManager
 import com.tessera.otp.data.prefs.AppSettings
+import com.tessera.otp.data.prefs.LEGACY_ACCOUNT_ID
 import com.tessera.otp.data.prefs.SINGLETON_PROVIDER_ORDER
 import com.tessera.otp.data.prefs.SettingsRepository
 import com.tessera.otp.data.prefs.SyncInterval
 import com.tessera.otp.data.prefs.SyncProviderType
 import com.tessera.otp.data.prefs.WebDavServer
+import com.tessera.otp.data.prefs.accountDisplayName
 import com.tessera.otp.data.prefs.displayLabel
+import com.tessera.otp.data.prefs.googleDriveBindingKey
+import com.tessera.otp.data.prefs.oneDriveBindingKey
 import com.tessera.otp.data.prefs.webdavBindingKey
 import com.tessera.otp.data.repo.AccountRepository
 import com.tessera.otp.sync.GoogleDriveAuth
@@ -44,6 +48,7 @@ data class SyncUiState(
     val giteeOwnerRepo: String = "",
     val giteePath: String = "tessera.vault",
     val giteeToken: String = "",
+    /** 是否存在已连接的 OneDrive 账号（界面用它决定"登录"还是"再添加账号"）。 */
     val oneDriveConnected: Boolean = false,
     /** 已绑定的后端（顺序即界面顺序）：只有绑定成功的才显示在页面上。 */
     val bindings: List<SyncBinding> = emptyList(),
@@ -54,7 +59,6 @@ data class SyncUiState(
     val syncEnabled: Boolean = true,
     val lastStatus: String = "尚未同步",
     val lastSyncAt: Long = 0L,
-    val googleAccount: String = "",
     val running: Boolean = false,
     val message: String? = null
 )
@@ -62,7 +66,7 @@ data class SyncUiState(
 /**
  * 云同步页上的一行「已绑定后端」。
  *
- * [key] 同时是停用集合与云端删除定位用的键（WebDAV 为 `WEBDAV:<id>`，其余为枚举名）。
+ * [key] 同时是停用集合与云端删除定位用的键：多实例后端为 `<类型>:<实例 id>`，其余为枚举名。
  */
 data class SyncBinding(
     val key: String,
@@ -70,19 +74,20 @@ data class SyncBinding(
     /** 副标题：账号 / 地址 / 文件名 / 仓库路径，用于区分同类多个实例。 */
     val detail: String,
     val type: SyncProviderType,
-    val webdavServerId: String? = null,
+    /** 多实例后端的实例 id：WebDAV 是服务器 id，Google Drive / OneDrive 是账号 id。 */
+    val instanceId: String? = null,
     /** 是否参与同步；关闭只是不同步，配置仍然保留。 */
     val active: Boolean = true,
     /** 可编辑（WebDAV 与三个凭据型后端）；OAuth 型只能重新登录。 */
     val editable: Boolean = false
 )
 
-/** 「云端数据」里可删除的一个远端后端实例（WebDAV 每个服务器各一条）。 */
+/** 「云端数据」里可删除的一个远端后端实例（多实例后端各自一条）。 */
 data class CloudTarget(
     val key: String,
     val label: String,
     val type: SyncProviderType,
-    val webdavServerId: String? = null
+    val instanceId: String? = null
 )
 
 /**
@@ -104,7 +109,7 @@ class SyncViewModel(
     init {
         viewModelScope.launch {
             val current = settings.settings.first()
-            val oneDrive = OneDriveAuth.isConnected(appContext)
+            val oneDrive = OneDriveAuth.accountIds(appContext)
             _state.value = _state.value.copy(
                 passphraseSet = !passphraseStore.passphrase.isNullOrBlank(),
                 webdavServers = current.webdavServers,
@@ -116,13 +121,12 @@ class SyncViewModel(
                 giteeOwnerRepo = current.giteeOwnerRepo,
                 giteePath = current.giteePath,
                 giteeToken = current.giteeToken,
-                oneDriveConnected = oneDrive,
+                oneDriveConnected = oneDrive.isNotEmpty(),
                 bindings = bindingsOf(current, oneDrive),
                 interval = runCatching { SyncInterval.valueOf(current.syncIntervalName) }.getOrDefault(SyncInterval.OFF),
                 syncEnabled = current.syncEnabled,
                 lastStatus = current.lastSyncStatus,
                 lastSyncAt = current.lastSyncAt,
-                googleAccount = current.googleAccount,
                 configuredTargets = configuredTargets(current, oneDrive)
             )
         }
@@ -130,9 +134,9 @@ class SyncViewModel(
 
     /**
      * 已绑定的后端列表——**绑定（凭据填齐）才会出现在页面上**，未绑定的一律不显示。
-     * 「添加同步后端」里能被再次添加的也只有未绑定的单实例后端（WebDAV 可加多台）。
+     * 「添加同步后端」里能被再次添加的只有未绑定的单实例后端（WebDAV / 云盘可加多个）。
      */
-    private fun bindingsOf(s: AppSettings, oneDriveConnected: Boolean): List<SyncBinding> = buildList {
+    private fun bindingsOf(s: AppSettings, oneDriveAccountIds: List<String>): List<SyncBinding> = buildList {
         val disabled = s.disabledProviders
         s.webdavServers.forEach { server ->
             val key = webdavBindingKey(server.id)
@@ -143,14 +147,41 @@ class SyncViewModel(
                     detail = "WebDAV · " + server.url.ifBlank { "（未填写地址）" } +
                         " · 文件名 " + server.fileName.ifBlank { "tessera.vault" },
                     type = SyncProviderType.WEBDAV,
-                    webdavServerId = server.id,
+                    instanceId = server.id,
                     active = key !in disabled,
                     editable = true
                 )
             )
         }
+        // Google Drive：一个账号一行，标题就是账号（与 WebDAV 用备注名做标题同一套口径）
+        s.googleAccounts.forEach { account ->
+            val key = googleDriveBindingKey(account)
+            add(
+                SyncBinding(
+                    key = key,
+                    label = accountDisplayName(account),
+                    detail = "Google Drive · " + googleAccountHint(account),
+                    type = SyncProviderType.GOOGLE_DRIVE,
+                    instanceId = account,
+                    active = key !in disabled
+                )
+            )
+        }
+        oneDriveAccountIds.forEach { account ->
+            val key = oneDriveBindingKey(account)
+            add(
+                SyncBinding(
+                    key = key,
+                    label = accountDisplayName(account),
+                    detail = "OneDrive · 已连接微软账号",
+                    type = SyncProviderType.ONEDRIVE,
+                    instanceId = account,
+                    active = key !in disabled
+                )
+            )
+        }
         SINGLETON_PROVIDER_ORDER.forEach { type ->
-            if (!SyncProviderFactory.isBound(s, type, oneDriveConnected)) return@forEach
+            if (!SyncProviderFactory.hasCredentials(s, type)) return@forEach
             add(
                 SyncBinding(
                     key = type.name,
@@ -165,35 +196,51 @@ class SyncViewModel(
         }
     }
 
+    /** Google 账号的副标题：迁移出来的旧记录没有邮箱，需要说清楚。 */
+    private fun googleAccountHint(account: String): String =
+        if (account == LEGACY_ACCOUNT_ID) "旧版单账号配置（未记录邮箱）" else "账号 " + account
+
     private fun bindingDetail(s: AppSettings, type: SyncProviderType): String = when (type) {
         SyncProviderType.GITHUB -> s.githubOwnerRepo + " · " + s.githubPath
         SyncProviderType.GITEE -> s.giteeOwnerRepo + " · " + s.giteePath
         SyncProviderType.GIST -> if (s.gistId.isBlank()) "首次同步会自动创建私有 Gist" else "Gist ID " + s.gistId
-        SyncProviderType.GOOGLE_DRIVE -> s.googleAccount
-        SyncProviderType.ONEDRIVE -> "已连接微软账号"
         else -> ""
     }
 
     /**
      * 判定哪些后端「已配置」——只有配好凭据的后端才可能云端有数据、才需要在「云端数据」里列出。
-     * WebDAV 每个服务器各一条；Gist 额外要求已有 gistId（没有 Gist 就没有远端数据可删）。
+     * 多实例后端每个实例各一条；Gist 额外要求已有 gistId（没有 Gist 就没有远端数据可删）。
      */
-    private fun configuredTargets(s: AppSettings, oneDriveConnected: Boolean): List<CloudTarget> = buildList {
+    private fun configuredTargets(s: AppSettings, oneDriveAccountIds: List<String>): List<CloudTarget> = buildList {
         s.webdavServers.forEach {
             add(CloudTarget(webdavBindingKey(it.id), "WebDAV（" + it.displayLabel + "）", SyncProviderType.WEBDAV, it.id))
         }
+        s.googleAccounts.forEach {
+            add(
+                CloudTarget(
+                    googleDriveBindingKey(it),
+                    "Google Drive（" + accountDisplayName(it) + "）",
+                    SyncProviderType.GOOGLE_DRIVE,
+                    it
+                )
+            )
+        }
+        oneDriveAccountIds.forEach {
+            add(
+                CloudTarget(
+                    oneDriveBindingKey(it),
+                    "OneDrive（" + accountDisplayName(it) + "）",
+                    SyncProviderType.ONEDRIVE,
+                    it
+                )
+            )
+        }
         if (s.gistToken.isNotBlank() && s.gistId.isNotBlank()) add(CloudTarget("GIST", "GitHub Gist", SyncProviderType.GIST))
-        if (SyncProviderFactory.isBound(s, SyncProviderType.GITHUB, oneDriveConnected)) {
+        if (SyncProviderFactory.hasCredentials(s, SyncProviderType.GITHUB)) {
             add(CloudTarget("GITHUB", "GitHub 仓库", SyncProviderType.GITHUB))
         }
-        if (SyncProviderFactory.isBound(s, SyncProviderType.GITEE, oneDriveConnected)) {
+        if (SyncProviderFactory.hasCredentials(s, SyncProviderType.GITEE)) {
             add(CloudTarget("GITEE", "Gitee", SyncProviderType.GITEE))
-        }
-        if (SyncProviderFactory.isBound(s, SyncProviderType.GOOGLE_DRIVE, oneDriveConnected)) {
-            add(CloudTarget("GOOGLE_DRIVE", "Google Drive", SyncProviderType.GOOGLE_DRIVE))
-        }
-        if (SyncProviderFactory.isBound(s, SyncProviderType.ONEDRIVE, oneDriveConnected)) {
-            add(CloudTarget("ONEDRIVE", "OneDrive", SyncProviderType.ONEDRIVE))
         }
     }
 
@@ -207,7 +254,7 @@ class SyncViewModel(
         viewModelScope.launch {
             val current = settings.settings.first()
             val provider = try {
-                SyncProviderFactory.createFor(appContext, current, SyncTarget(target.type, target.webdavServerId))
+                SyncProviderFactory.createFor(appContext, current, SyncTarget(target.type, target.instanceId))
             } catch (t: Throwable) {
                 _state.value = _state.value.copy(message = target.label + "：" + (t.message ?: "配置不完整，无法删除"))
                 return@launch
@@ -247,17 +294,19 @@ class SyncViewModel(
     /**
      * 移除一个已绑定后端的本地配置（不动云端文件）。
      *
-     * WebDAV 只从服务器列表里摘掉；OAuth 型清本地标记；凭据型清掉对应令牌。
+     * WebDAV 从服务器列表里摘掉；Google Drive 从账号列表里摘掉（Play Services 侧的授权不动）；
+     * OneDrive 删掉该账号的本地令牌；凭据型清掉对应令牌。
      */
     fun removeBinding(binding: SyncBinding) {
         viewModelScope.launch {
             val current = settings.settings.first()
             when (binding.type) {
-                SyncProviderType.WEBDAV -> {
-                    val id = binding.webdavServerId.orEmpty()
-                    settings.setWebDavServers(current.webdavServers.filterNot { it.id == id })
-                    settings.setDisabledProviders(current.disabledProviders - binding.key)
-                }
+                SyncProviderType.WEBDAV ->
+                    settings.setWebDavServers(current.webdavServers.filterNot { it.id == binding.instanceId })
+                SyncProviderType.GOOGLE_DRIVE ->
+                    settings.setGoogleAccounts(current.googleAccounts - binding.instanceId.orEmpty())
+                SyncProviderType.ONEDRIVE ->
+                    OneDriveAuth.signOut(appContext, binding.instanceId.orEmpty())
                 SyncProviderType.GITHUB -> {
                     settings.setGitHub("", "tessera.vault")
                     settings.setGitHubToken("")
@@ -267,11 +316,10 @@ class SyncViewModel(
                     settings.setGistToken("")
                     settings.setGistId("")
                 }
-                SyncProviderType.GOOGLE_DRIVE -> settings.setGoogleAccount("")
-                SyncProviderType.ONEDRIVE -> OneDriveAuth.signOut(appContext)
                 SyncProviderType.NONE -> Unit
             }
-            if (binding.key in current.disabledProviders && binding.type != SyncProviderType.WEBDAV) {
+            // 实例已经不存在了，它在停用集合里的残留键一并清掉
+            if (binding.key in current.disabledProviders) {
                 settings.setDisabledProviders(current.disabledProviders - binding.key)
             }
             refreshBindings()
@@ -283,13 +331,37 @@ class SyncViewModel(
 
     fun updatePassphraseInput(value: String) { _state.value = _state.value.copy(passphraseInput = value) }
 
-    /** GoogleSignIn 成功后保存账号名（GoogleAccountCredential 需要它来签发 appdata 令牌）。 */
-    fun setGoogleAccount(email: String) {
-        _state.value = _state.value.copy(googleAccount = email, message = "Google 账号已连接：" + email)
+    /**
+     * Google 账号授权成功后由宿主 Activity 通知（传入系统账号选择器选中的邮箱）。
+     * 记进账号列表，并默认参与同步；重复授权同一账号是幂等的。
+     *
+     * 旧版迁移出来的那条「默认账号」在此退役：它指向的是同一个云端文件，
+     * 留着会让同一份备份被同步两遍（还可能因为 etag 变化报出假的冲突失败）。
+     */
+    fun onGoogleAccountAuthorized(email: String) {
         viewModelScope.launch {
-            settings.setGoogleAccount(email)
-            enableBinding(SyncProviderType.GOOGLE_DRIVE)
+            val current = settings.settings.first()
+            if (email.isNotBlank()) {
+                val next = (current.googleAccounts - LEGACY_ACCOUNT_ID).let {
+                    if (email in it) it else it + email
+                }
+                if (next != current.googleAccounts) {
+                    settings.setGoogleAccounts(next)
+                    clearLegacyDisabledKey(SyncProviderType.GOOGLE_DRIVE)
+                }
+            }
+            enableBinding(SyncProviderFactory.bindingKey(SyncProviderType.GOOGLE_DRIVE, email))
             refreshBindings()
+            _state.value = _state.value.copy(message = "Google 账号已连接：" + accountDisplayName(email))
+        }
+    }
+
+    /** 旧版迁移出来的「默认账号」退役后，清掉它在停用集合里的残留键（否则会留下无主配置）。 */
+    private suspend fun clearLegacyDisabledKey(type: SyncProviderType) {
+        val current = settings.settings.first()
+        val key = SyncProviderFactory.bindingKey(type, LEGACY_ACCOUNT_ID)
+        if (key in current.disabledProviders) {
+            settings.setDisabledProviders(current.disabledProviders - key)
         }
     }
 
@@ -349,17 +421,25 @@ class SyncViewModel(
         viewModelScope.launch {
             settings.setGitHub(ownerRepo, path)
             settings.setGitHubToken(token)
-            enableBinding(SyncProviderType.GITHUB)
+            enableBinding(SyncProviderType.GITHUB.name)
             refreshBindings()
         }
     }
 
-    /** 登录成功后由宿主 Activity 通知刷新状态。 */
-    fun onOneDriveSignedIn() {
+    /** 登录成功后由宿主 Activity 通知刷新状态；[accountId] 是刚登录账号的 id（邮箱），可能为 null。 */
+    fun onOneDriveSignedIn(accountId: String?) {
         viewModelScope.launch {
-            enableBinding(SyncProviderType.ONEDRIVE)
+            if (!accountId.isNullOrBlank()) {
+                // 具名登录成功后旧版的「默认账号」令牌已被 OneDriveAuth 退役，这里清掉它的停用键
+                if (LEGACY_ACCOUNT_ID !in OneDriveAuth.accountIds(appContext)) {
+                    clearLegacyDisabledKey(SyncProviderType.ONEDRIVE)
+                }
+                enableBinding(SyncProviderFactory.bindingKey(SyncProviderType.ONEDRIVE, accountId))
+            }
             refreshBindings()
-            _state.value = _state.value.copy(message = "OneDrive 已连接")
+            _state.value = _state.value.copy(
+                message = "OneDrive 已连接：" + accountDisplayName(accountId.orEmpty())
+            )
         }
     }
 
@@ -367,7 +447,7 @@ class SyncViewModel(
         _state.value = _state.value.copy(giteeOwnerRepo = ownerRepo, giteePath = path, giteeToken = token)
         viewModelScope.launch {
             settings.setGitee(ownerRepo, path, token)
-            enableBinding(SyncProviderType.GITEE)
+            enableBinding(SyncProviderType.GITEE.name)
             refreshBindings()
         }
     }
@@ -376,25 +456,25 @@ class SyncViewModel(
         _state.value = _state.value.copy(gistToken = token)
         viewModelScope.launch {
             settings.setGistToken(token)
-            enableBinding(SyncProviderType.GIST)
+            enableBinding(SyncProviderType.GIST.name)
             refreshBindings()
         }
     }
 
     /** 绑定成功的后端默认参与同步：把它从停用集合里移除。 */
-    private suspend fun enableBinding(type: SyncProviderType) {
+    private suspend fun enableBinding(key: String) {
         val current = settings.settings.first()
-        if (type.name in current.disabledProviders) {
-            settings.setDisabledProviders(current.disabledProviders - type.name)
+        if (key in current.disabledProviders) {
+            settings.setDisabledProviders(current.disabledProviders - key)
         }
     }
 
     /** 重新读取设置，刷新「已绑定后端」「云端数据」与各表单的当前值。 */
     private suspend fun refreshBindings() {
         val s = settings.settings.first()
-        val oneDrive = OneDriveAuth.isConnected(appContext)
+        val oneDrive = OneDriveAuth.accountIds(appContext)
         _state.value = _state.value.copy(
-            oneDriveConnected = oneDrive,
+            oneDriveConnected = oneDrive.isNotEmpty(),
             webdavServers = s.webdavServers,
             githubOwnerRepo = s.githubOwnerRepo,
             githubPath = s.githubPath,
@@ -404,7 +484,6 @@ class SyncViewModel(
             giteeOwnerRepo = s.giteeOwnerRepo,
             giteePath = s.giteePath,
             giteeToken = s.giteeToken,
-            googleAccount = s.googleAccount,
             bindings = bindingsOf(s, oneDrive),
             configuredTargets = configuredTargets(s, oneDrive)
         )
@@ -438,7 +517,7 @@ class SyncViewModel(
                 if (passphraseStore.passphrase.isNullOrBlank()) {
                     SyncOutcome(false, message = "请先设置同步口令")
                 } else {
-                    val targets = SyncProviderFactory.targets(current, OneDriveAuth.isConnected(appContext))
+                    val targets = SyncProviderFactory.targets(current, OneDriveAuth.accountIds(appContext))
                     if (targets.isEmpty()) {
                         _state.value = _state.value.copy(running = false, message = "还没有已绑定的同步后端，请先「添加同步后端」")
                         return@launch
@@ -518,7 +597,7 @@ class SyncViewModel(
         val current = settings.settings.first()
         if (!current.syncEnabled) return
         if (passphraseStore.passphrase.isNullOrBlank()) return
-        val targets = SyncProviderFactory.targets(current, OneDriveAuth.isConnected(appContext))
+        val targets = SyncProviderFactory.targets(current, OneDriveAuth.accountIds(appContext))
         if (targets.isEmpty()) return
         val (providers, _) = SyncProviderFactory.createAll(appContext, current, targets) { id ->
             viewModelScope.launch { settings.setGistId(id) }

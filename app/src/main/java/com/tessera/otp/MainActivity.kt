@@ -1,5 +1,6 @@
 package com.tessera.otp
 
+import android.accounts.AccountManager
 import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
@@ -99,34 +100,58 @@ import com.tessera.otp.ui.theme.TesseraTheme
  */
 class MainActivity : FragmentActivity() {
 
-    private companion object {
-        /**
-         * Google Drive 的"已授权"标记。
-         * AuthorizationClient 不返回账号邮箱，因此该设置项只当开关用（界面显示固定文案）。
-         */
-        const val GOOGLE_AUTHORIZED_MARK = "授权有效"
-    }
-
     /** OneDrive 登录回跳（冷启动时先存起来，等 ViewModel 就绪再处理）。 */
     private var pendingAuthIntent: Intent? = null
+
+    /** 正在授权的 Google 账号（从系统账号选择器里选中的邮箱），授权回跳时用它记账。 */
+    private var pendingGoogleAccount: String? = null
+
+    /** 系统账号选择器：用户挑一个 Google 账号，回跳后针对该账号发起授权。 */
+    private val googleAccountChooser = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val account = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
+        if (result.resultCode != RESULT_OK || account.isNullOrBlank()) {
+            googleAuthFailed("未选择 Google 账号")
+            return@registerForActivityResult
+        }
+        pendingGoogleAccount = account
+        authorizeGoogleAccount(account)
+    }
 
     /**
      * Google Drive 授权：首次授权时 GMS 会返回一个 resolution（PendingIntent），
      * 需要用它启动授权界面，回跳后从 Intent 解析出 access token。
      */
     private val googleAuthLauncher = registerForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()
+        ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK) {
+        if (result.resultCode == RESULT_OK) {
             val token = GoogleDriveAuth.resultFromIntent(this, result.data)?.accessToken
             if (token.isNullOrBlank()) {
                 googleAuthFailed("Google 授权未返回令牌，请重试")
             } else {
-                model?.sync?.setGoogleAccount(GOOGLE_AUTHORIZED_MARK)
+                model?.sync?.onGoogleAccountAuthorized(pendingGoogleAccount.orEmpty())
             }
         } else {
             googleAuthFailed("Google 授权已取消")
         }
+    }
+
+    /** 针对已选中的账号取令牌：已授权则直接记账，否则弹出授权界面。 */
+    private fun authorizeGoogleAccount(account: String) {
+        GoogleDriveAuth.authorize(this, account)
+            .addOnSuccessListener { result ->
+                val pending = result.pendingIntent
+                when {
+                    result.hasResolution() && pending != null -> googleAuthLauncher.launch(
+                        androidx.activity.result.IntentSenderRequest.Builder(pending.intentSender).build()
+                    )
+                    !result.accessToken.isNullOrBlank() -> model?.sync?.onGoogleAccountAuthorized(account)
+                    else -> googleAuthFailed("Google 授权失败：未获得令牌")
+                }
+            }
+            .addOnFailureListener { e -> googleAuthFailed("Google 授权失败：" + GoogleDriveAuth.describe(e)) }
     }
 
     /** GMS 的授权失败提示（英文错误码对用户无意义，这里统一转成中文）。 */
@@ -207,20 +232,15 @@ class MainActivity : FragmentActivity() {
             .onFailure { android.widget.Toast.makeText(this, "无法发起登录：" + it.message, android.widget.Toast.LENGTH_LONG).show() }
     }
 
-    /** 发起 Google Drive 授权：已授权则直接标记连接，否则启动授权界面。 */
+    /** 发起 Google Drive 授权：先让用户选账号，再针对该账号取令牌（可绑定多个账号）。 */
     private fun startGoogleSignIn() {
-        GoogleDriveAuth.authorize(this)
-            .addOnSuccessListener { result ->
-                val pending = result.pendingIntent
-                when {
-                    result.hasResolution() && pending != null -> googleAuthLauncher.launch(
-                        androidx.activity.result.IntentSenderRequest.Builder(pending.intentSender).build()
-                    )
-                    !result.accessToken.isNullOrBlank() -> model?.sync?.setGoogleAccount(GOOGLE_AUTHORIZED_MARK)
-                    else -> googleAuthFailed("Google 授权失败：未获得令牌")
-                }
+        runCatching { googleAccountChooser.launch(GoogleDriveAuth.chooseAccountIntent()) }
+            .onFailure {
+                googleAuthFailed(
+                    if (it is android.content.ActivityNotFoundException) "设备上没有可用的 Google 账号，请先在系统设置里添加"
+                    else "无法打开账号选择器：" + it.message
+                )
             }
-            .addOnFailureListener { e -> googleAuthFailed("Google 授权失败：" + GoogleDriveAuth.describe(e)) }
     }
 
     /** 冷启动回跳：等 ViewModel 就绪后再换取令牌。 */
@@ -237,7 +257,7 @@ class MainActivity : FragmentActivity() {
         lifecycleScope.launch {
             val error = OneDriveAuth.handleRedirect(this@MainActivity, intent)
             if (error == null) {
-                m.sync.onOneDriveSignedIn()
+                m.sync.onOneDriveSignedIn(OneDriveAuth.lastSignedInAccount())
             } else {
                 android.widget.Toast.makeText(this@MainActivity, "OneDrive 登录失败：" + error, android.widget.Toast.LENGTH_LONG).show()
             }

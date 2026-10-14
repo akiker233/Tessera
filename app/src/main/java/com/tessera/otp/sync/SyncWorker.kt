@@ -13,59 +13,70 @@ import com.tessera.otp.data.prefs.AppSettings
 import com.tessera.otp.data.prefs.SINGLETON_PROVIDER_ORDER
 import com.tessera.otp.data.prefs.SyncInterval
 import com.tessera.otp.data.prefs.SyncProviderType
+import com.tessera.otp.data.prefs.accountDisplayName
 import com.tessera.otp.data.prefs.displayLabel
+import com.tessera.otp.data.prefs.googleDriveBindingKey
+import com.tessera.otp.data.prefs.oneDriveBindingKey
 import com.tessera.otp.data.prefs.webdavBindingKey
 import com.tessera.otp.di.AppContainer
 import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
-/** 一个参与同步的后端实例。WebDAV 可有多个，用 [webdavServerId] 区分具体服务器。 */
+/**
+ * 一个参与同步的后端实例。
+ *
+ * 单实例后端（GitHub / Gist / Gitee）每种只有一条、不带 [instanceId]；
+ * 多实例后端（WebDAV / Google Drive / OneDrive）用 [instanceId] 区分具体服务器或账号。
+ */
 data class SyncTarget(
     val type: SyncProviderType,
-    val webdavServerId: String? = null
+    val instanceId: String? = null
 )
 
 /** 根据当前设置构造同步后端；配置不完整时抛 SyncException（由 UI 显示原因）。 */
 object SyncProviderFactory {
 
-    /** 这个后端实例在「停用集合」里的键：WebDAV 每台服务器一条，其余每种一条。 */
-    fun bindingKey(type: SyncProviderType, webdavServerId: String? = null): String =
-        if (type == SyncProviderType.WEBDAV) webdavBindingKey(webdavServerId.orEmpty()) else type.name
+    /** 这个后端实例在「停用集合」里的键：多实例带 `<类型>:<实例 id>`，其余每种一个枚举名。 */
+    fun bindingKey(type: SyncProviderType, instanceId: String? = null): String = when (type) {
+        SyncProviderType.WEBDAV -> webdavBindingKey(instanceId.orEmpty())
+        SyncProviderType.GOOGLE_DRIVE -> googleDriveBindingKey(instanceId.orEmpty())
+        SyncProviderType.ONEDRIVE -> oneDriveBindingKey(instanceId.orEmpty())
+        else -> type.name
+    }
+
+    fun bindingKey(target: SyncTarget): String = bindingKey(target.type, target.instanceId)
+
+    /** 单实例后端的凭据是否填齐（多实例的凭据就是它们各自的条目，不在这里判）。 */
+    fun hasCredentials(settings: AppSettings, type: SyncProviderType): Boolean = when (type) {
+        SyncProviderType.GIST -> settings.gistToken.isNotBlank()
+        SyncProviderType.GITHUB -> settings.githubToken.isNotBlank() && hasOwnerRepo(settings.githubOwnerRepo)
+        SyncProviderType.GITEE -> settings.giteeToken.isNotBlank() && hasOwnerRepo(settings.giteeOwnerRepo)
+        else -> false
+    }
 
     /**
-     * 是否「已绑定」——凭据是否填齐。只有绑定的后端才会出现在云同步页、才会被同步。
+     * 已绑定的后端实例（凭据齐全的那些，**不看**停用开关）。
      *
-     * OneDrive 的连接状态存在它自己的 SharedPreferences 里，故由调用方传入。
+     * OneDrive 的令牌存在它自己的 SharedPreferences 里（应用可枚举已登录账号），
+     * 故账号列表由调用方传入。
      */
-    fun isBound(settings: AppSettings, type: SyncProviderType, oneDriveConnected: Boolean): Boolean =
-        when (type) {
-            SyncProviderType.WEBDAV -> settings.webdavServers.isNotEmpty()
-            SyncProviderType.GIST -> settings.gistToken.isNotBlank()
-            SyncProviderType.GITHUB -> settings.githubToken.isNotBlank() && hasOwnerRepo(settings.githubOwnerRepo)
-            SyncProviderType.GITEE -> settings.giteeToken.isNotBlank() && hasOwnerRepo(settings.giteeOwnerRepo)
-            SyncProviderType.GOOGLE_DRIVE -> settings.googleAccount.isNotBlank()
-            SyncProviderType.ONEDRIVE -> oneDriveConnected
-            SyncProviderType.NONE -> false
-        }
+    fun boundTargets(settings: AppSettings, oneDriveAccountIds: List<String>): List<SyncTarget> {
+        val result = mutableListOf<SyncTarget>()
+        settings.webdavServers.forEach { result += SyncTarget(SyncProviderType.WEBDAV, it.id) }
+        settings.googleAccounts.forEach { result += SyncTarget(SyncProviderType.GOOGLE_DRIVE, it) }
+        oneDriveAccountIds.forEach { result += SyncTarget(SyncProviderType.ONEDRIVE, it) }
+        SINGLETON_PROVIDER_ORDER.forEach { if (hasCredentials(settings, it)) result += SyncTarget(it) }
+        return result
+    }
 
     /**
      * 汇总参与同步的后端实例：**已绑定且未被停用**。
      *
-     * WebDAV 每台服务器各一条（键 `WEBDAV:<id>`），其余后端每种一条（键 = 枚举名）。
      * 未绑定的后端不会进来，否则同步时会冒出一串「请填写令牌」的配置错误。
      */
-    fun targets(settings: AppSettings, oneDriveConnected: Boolean): List<SyncTarget> {
+    fun targets(settings: AppSettings, oneDriveAccountIds: List<String>): List<SyncTarget> {
         val disabled = settings.disabledProviders
-        val result = mutableListOf<SyncTarget>()
-        settings.webdavServers.forEach { server ->
-            if (bindingKey(SyncProviderType.WEBDAV, server.id) !in disabled) {
-                result += SyncTarget(SyncProviderType.WEBDAV, server.id)
-            }
-        }
-        SINGLETON_PROVIDER_ORDER.forEach { type ->
-            if (type.name !in disabled && isBound(settings, type, oneDriveConnected)) result += SyncTarget(type)
-        }
-        return result
+        return boundTargets(settings, oneDriveAccountIds).filter { bindingKey(it) !in disabled }
     }
 
     /**
@@ -101,7 +112,7 @@ object SyncProviderFactory {
     ): SyncProvider =
         when (target.type) {
             SyncProviderType.WEBDAV -> {
-                val server = settings.webdavServers.firstOrNull { it.id == target.webdavServerId }
+                val server = settings.webdavServers.firstOrNull { it.id == target.instanceId }
                     ?: throw SyncException("该 WebDAV 服务器已被移除")
                 if (server.url.isBlank()) throw SyncException("请先填写 WebDAV 地址")
                 WebDavProvider(
@@ -134,21 +145,32 @@ object SyncProviderFactory {
                 }
                 GitHubRepoProvider(settings.githubToken, parts[0], parts[1], settings.githubPath)
             }
-            SyncProviderType.GOOGLE_DRIVE -> GoogleDriveProvider(context, tokenProvider = { GoogleDriveAuth.accessToken(context) })
+            SyncProviderType.GOOGLE_DRIVE -> {
+                val account = target.instanceId.orEmpty()
+                GoogleDriveProvider(
+                    context = context,
+                    tokenProvider = { GoogleDriveAuth.accessToken(context, account) },
+                    displayName = "Google Drive（" + accountDisplayName(account) + "）"
+                )
+            }
             SyncProviderType.ONEDRIVE -> {
+                val account = target.instanceId.orEmpty()
                 // 令牌由 OneDriveAuth 管理（自动续期）；未登录时给出明确提示
-                val token = OneDriveAuth.accessToken(context)
-                    ?: throw SyncException("尚未连接 OneDrive：请先在「云同步」里登录微软账号")
-                OneDriveProvider(token)
+                val token = OneDriveAuth.accessToken(context, account)
+                    ?: throw SyncException("尚未连接 OneDrive（" + accountDisplayName(account) + "）：请先在「云同步」里登录微软账号")
+                OneDriveProvider(token, displayName = "OneDrive（" + accountDisplayName(account) + "）")
             }
             SyncProviderType.NONE -> throw SyncException("尚未选择同步方式")
         }
 
-    /** 出错时用于展示的后端名（WebDAV 带服务器备注，便于区分多个服务器）。 */
-    private fun SyncTarget.label(settings: AppSettings): String =
-        if (type == SyncProviderType.WEBDAV) {
-            "WebDAV（" + (settings.webdavServers.firstOrNull { it.id == webdavServerId }?.displayLabel ?: "已移除") + "）"
-        } else type.label
+    /** 出错时用于展示的后端名（多实例带实例名，便于区分同一后端的多个配置）。 */
+    private fun SyncTarget.label(settings: AppSettings): String = when (type) {
+        SyncProviderType.WEBDAV ->
+            "WebDAV（" + (settings.webdavServers.firstOrNull { it.id == instanceId }?.displayLabel ?: "已移除") + "）"
+        SyncProviderType.GOOGLE_DRIVE, SyncProviderType.ONEDRIVE ->
+            type.label + "（" + accountDisplayName(instanceId.orEmpty()) + "）"
+        else -> type.label
+    }
 }
 
 /** `owner/repo` 形式：恰好一个斜杠。 */
@@ -169,7 +191,7 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
             val (providers, setupErrors) = SyncProviderFactory.createAll(
                 applicationContext,
                 settings,
-                SyncProviderFactory.targets(settings, OneDriveAuth.isConnected(applicationContext))
+                SyncProviderFactory.targets(settings, OneDriveAuth.accountIds(applicationContext))
             ) { id ->
                 kotlinx.coroutines.runBlocking { container.settings.setGistId(id) }
             }
