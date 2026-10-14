@@ -400,7 +400,6 @@ private fun AppShell(
         onBiometric = model::setBiometric,
         onDynamicColor = model::setDynamicColor,
         onTrashRetentionDays = model::setTrashRetention,
-        onSyncInterval = model::setSyncInterval,
         onSetPin = model::setPin,
         onClearPin = model::clearPin,
         onOpenTrash = { model.navigate(Screen.Trash) },

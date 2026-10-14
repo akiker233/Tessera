@@ -54,7 +54,6 @@ data class SettingsActions(
     val onBiometric: (Boolean) -> Unit,
     val onDynamicColor: (Boolean) -> Unit,
     val onTrashRetentionDays: (Int) -> Unit,
-    val onSyncInterval: (SyncInterval) -> Unit,
     val onSetPin: (String) -> Unit,
     val onClearPin: () -> Unit,
     val onOpenTrash: () -> Unit,
@@ -398,7 +397,6 @@ private fun TimeSettingsScreen(timeStatusText: String, actions: SettingsActions,
 @Composable
 private fun DataSettingsScreen(settings: AppSettings, actions: SettingsActions, onBack: () -> Unit) {
     var showTrashRetention by remember { mutableStateOf(false) }
-    var showSyncIntervalDialog by remember { mutableStateOf(false) }
 
     SettingsPage("数据", onBack) {
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
@@ -431,20 +429,11 @@ private fun DataSettingsScreen(settings: AppSettings, actions: SettingsActions, 
 
         SectionTitle("云同步")
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-            Column {
-                ChoiceRow(
-                    title = "云同步",
-                    subtitle = settings.lastSyncStatus,
-                    onClick = actions.onOpenSync
-                )
-                HorizontalDivider()
-                ChoiceRow(
-                    title = "自动同步周期",
-                    subtitle = if (settings.syncEnabled) SyncInterval.valueOf(settings.syncIntervalName).label
-                    else "已关闭（同步总开关已关）",
-                    onClick = { showSyncIntervalDialog = true }
-                )
-            }
+            ChoiceRow(
+                title = "云同步",
+                subtitle = settings.lastSyncStatus,
+                onClick = actions.onOpenSync
+            )
         }
     }
 
@@ -455,17 +444,6 @@ private fun DataSettingsScreen(settings: AppSettings, actions: SettingsActions, 
             onConfirm = { days ->
                 actions.onTrashRetentionDays(days)
                 showTrashRetention = false
-            }
-        )
-    }
-
-    if (showSyncIntervalDialog) {
-        SyncIntervalDialog(
-            current = SyncInterval.valueOf(settings.syncIntervalName),
-            onDismiss = { showSyncIntervalDialog = false },
-            onConfirm = { interval ->
-                actions.onSyncInterval(interval)
-                showSyncIntervalDialog = false
             }
         )
     }
@@ -608,36 +586,6 @@ private fun NextTokenDialog(current: Int, onDismiss: () -> Unit, onConfirm: (Int
                     ) {
                         RadioButton(selected = current == seconds, onClick = { onConfirm(seconds) })
                         Text(if (seconds == 0) "不显示" else "剩余 " + seconds + " 秒时显示")
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
-    )
-}
-
-/** 自动同步周期选择（与「显示下一个令牌」一致：点击弹单选，不再点击循环）。 */
-@Composable
-private fun SyncIntervalDialog(
-    current: SyncInterval,
-    onDismiss: () -> Unit,
-    onConfirm: (SyncInterval) -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("自动同步周期") },
-        text = {
-            Column {
-                SyncInterval.entries.forEach { interval ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onConfirm(interval) }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(selected = current == interval, onClick = { onConfirm(interval) })
-                        Text(interval.label)
                     }
                 }
             }

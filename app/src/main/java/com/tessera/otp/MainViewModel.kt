@@ -244,12 +244,6 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
     }
     fun setDynamicColor(value: Boolean) { viewModelScope.launch { container.settings.setDynamicColor(value) } }
     fun setTrashRetention(days: Int) { viewModelScope.launch { container.settings.setTrashRetentionDays(days) } }
-    fun setSyncInterval(interval: SyncInterval) {
-        viewModelScope.launch { container.settings.setSyncInterval(interval) }
-        // 关键：改周期后必须立刻重排 WorkManager，
-        // 否则从「设置页」修改只会存下设置、周期任务不会更新（同步页那边是自己排的）
-        container.workScheduler?.invoke(interval)
-    }
     /** 手动触发网络校时（出码使用校准后的时间）。 */
     fun syncNetworkTime() {
         viewModelScope.launch {
