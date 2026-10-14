@@ -2,81 +2,84 @@ package com.tessera.otp.feature.sync
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import com.tessera.otp.sync.GoogleDriveProvider
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Switch
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.launch
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.tessera.otp.data.prefs.SINGLETON_PROVIDER_ORDER
 import com.tessera.otp.data.prefs.SyncInterval
 import com.tessera.otp.data.prefs.SyncProviderType
+import com.tessera.otp.data.prefs.WebDavServer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * 云同步设置页：选择后端、填写凭据、设置同步口令、手动同步与自动周期、查看同步状态。
+ * 云同步设置页：预设 + 添加配置。
  *
- * Google Drive / OneDrive 需要用户先完成 OAuth（代码里是占位常量），
- * 未配置时点击同步会给出明确提示，而不是静默失败。
+ * 页面**只显示已绑定的后端**（[SyncUiState.bindings]）；未绑定的服务不出现在这里，
+ * 需要点「添加同步后端」选一种，完成登录或填写凭据后才会加入列表。
+ * 后端默认参与同步，可用行内开关临时暂停。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SyncScreen(
     state: SyncUiState,
-    onSelectProvider: (SyncProviderType) -> Unit,
     onPassphraseChange: (String) -> Unit,
     onSavePassphrase: () -> Unit,
-    onWebDav: (String, String, String) -> Unit,
+    onSaveWebDavServer: (WebDavServer) -> Unit,
     onGitHub: (String, String, String) -> Unit,
     onGist: (String) -> Unit,
     onGitee: (String, String, String) -> Unit,
     onInterval: (SyncInterval) -> Unit,
     onSyncEnabled: (Boolean) -> Unit,
     onGoogleSignIn: () -> Unit,
-    onToggleProvider: (SyncProviderType, Boolean) -> Unit,
-    onClearGoogleAccount: () -> Unit,
     onOneDriveSignIn: () -> Unit,
-    onOneDriveSignOut: () -> Unit,
-    onDeleteCloud: (SyncProviderType) -> Unit,
+    onRemoveBinding: (SyncBinding) -> Unit,
+    onToggleBinding: (String, Boolean) -> Unit,
+    onDeleteCloud: (CloudTarget) -> Unit,
     onSyncNow: () -> Unit
 ) {
     var showPassphraseDialog by remember { mutableStateOf(false) }
-    var pendingDelete by remember { mutableStateOf<SyncProviderType?>(null) }
+    var showAddPicker by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<CloudTarget?>(null) }
+    var pendingRemove by remember { mutableStateOf<SyncBinding?>(null) }
+    var editingWebDav by remember { mutableStateOf(false) }
+    var webdavInitial by remember { mutableStateOf(WebDavServer(id = "")) }
+    var showGitHubDialog by remember { mutableStateOf(false) }
+    var showGistDialog by remember { mutableStateOf(false) }
+    var showGiteeDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -114,21 +117,6 @@ fun SyncScreen(
             Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
         }
 
-        Text("同步方式", style = MaterialTheme.typography.labelLarge)
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            SyncProviderType.entries.filter { it != SyncProviderType.NONE }.forEach { type ->
-                FilterChip(
-                    selected = state.provider == type,
-                    onClick = { onSelectProvider(type) },
-                    label = { Text(type.label) }
-                )
-            }
-        }
-
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -146,43 +134,49 @@ fun SyncScreen(
             )
         }
 
-        when (state.provider) {
-            SyncProviderType.WEBDAV -> WebDavForm(state, onWebDav)
-            SyncProviderType.GITHUB -> GitHubForm(state, onGitHub)
-            SyncProviderType.GIST -> GistForm(state, onGist)
-            SyncProviderType.GITEE -> GiteeForm(state, onGitee)
-            SyncProviderType.GOOGLE_DRIVE -> GoogleDriveCard(state, onGoogleSignIn, onClearGoogleAccount)
-            SyncProviderType.ONEDRIVE -> OneDriveCard(state, onOneDriveSignIn, onOneDriveSignOut)
-            SyncProviderType.NONE -> HintCard("未选择", "请选择一种同步方式。WebDAV 与 GitHub/Gist 只需填写地址与令牌即可使用。")
-        }
-
-        Text("同时同步", style = MaterialTheme.typography.labelLarge)
+        Text("同步后端", style = MaterialTheme.typography.labelLarge)
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (state.bindings.isEmpty()) {
+                    Text(
+                        text = "还没有配置任何同步后端。点下方「添加同步后端」选择一种云服务，" +
+                            "登录或填写凭据后即可开始同步。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    state.bindings.forEachIndexed { index, binding ->
+                        if (index > 0) HorizontalDivider()
+                        BindingRow(
+                            binding = binding,
+                            onToggle = { onToggleBinding(binding.key, it) },
+                            onEdit = {
+                                when (binding.type) {
+                                    SyncProviderType.WEBDAV -> {
+                                        webdavInitial = state.webdavServers
+                                            .firstOrNull { it.id == binding.webdavServerId }
+                                            ?: WebDavServer(id = "")
+                                        editingWebDav = true
+                                    }
+                                    SyncProviderType.GITHUB -> showGitHubDialog = true
+                                    SyncProviderType.GIST -> showGistDialog = true
+                                    SyncProviderType.GITEE -> showGiteeDialog = true
+                                    SyncProviderType.GOOGLE_DRIVE -> onGoogleSignIn()
+                                    SyncProviderType.ONEDRIVE -> onOneDriveSignIn()
+                                    SyncProviderType.NONE -> Unit
+                                }
+                            },
+                            onRemove = { pendingRemove = binding }
+                        )
+                    }
+                }
+                OutlinedButton(onClick = { showAddPicker = true }) { Text("添加同步后端") }
                 Text(
-                    text = "当前选择的后端默认参与同步；勾选的后端会在每次同步时与它一起读写。",
+                    text = "只有已绑定的后端会参与同步，可用左侧开关临时暂停；" +
+                        "WebDAV 可添加多台，各自指定云端文件名。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                listOf(
-                    SyncProviderType.WEBDAV,
-                    SyncProviderType.GIST,
-                    SyncProviderType.GITHUB,
-                    SyncProviderType.GITEE,
-                    SyncProviderType.GOOGLE_DRIVE,
-                    SyncProviderType.ONEDRIVE
-                ).filter { it != state.provider }.forEach { type ->
-                    val checked = type.name in state.enabledProviders
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onToggleProvider(type, !checked) },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(checked = checked, onCheckedChange = { onToggleProvider(type, it) })
-                        Text(type.label)
-                    }
-                }
             }
         }
 
@@ -194,16 +188,16 @@ fun SyncScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (state.configuredProviders.isEmpty()) {
+                if (state.configuredTargets.isEmpty()) {
                     Text("尚无已配置的后端", style = MaterialTheme.typography.bodySmall)
                 } else {
-                    state.configuredProviders.forEach { type ->
+                    state.configuredTargets.forEach { target ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(type.label, modifier = Modifier.weight(1f))
-                            TextButton(onClick = { pendingDelete = type }) {
+                            Text(target.label, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { pendingDelete = target }) {
                                 Text("删除", color = MaterialTheme.colorScheme.error)
                             }
                         }
@@ -272,21 +266,105 @@ fun SyncScreen(
         )
     }
 
-    pendingDelete?.let { type ->
+    if (showAddPicker) {
+        AddBackendDialog(
+            boundTypes = state.bindings.map { it.type }.toSet(),
+            onDismiss = { showAddPicker = false },
+            onPick = { type ->
+                showAddPicker = false
+                when (type) {
+                    SyncProviderType.WEBDAV -> {
+                        webdavInitial = WebDavServer(id = "")
+                        editingWebDav = true
+                    }
+                    SyncProviderType.GITHUB -> showGitHubDialog = true
+                    SyncProviderType.GIST -> showGistDialog = true
+                    SyncProviderType.GITEE -> showGiteeDialog = true
+                    SyncProviderType.GOOGLE_DRIVE -> onGoogleSignIn()
+                    SyncProviderType.ONEDRIVE -> onOneDriveSignIn()
+                    SyncProviderType.NONE -> Unit
+                }
+            }
+        )
+    }
+
+    if (editingWebDav) {
+        WebDavServerDialog(
+            initial = webdavInitial,
+            onDismiss = { editingWebDav = false },
+            onConfirm = { onSaveWebDavServer(it); editingWebDav = false }
+        )
+    }
+
+    if (showGitHubDialog) {
+        GitHubDialog(
+            state = state,
+            onDismiss = { showGitHubDialog = false },
+            onConfirm = { ownerRepo, token, path ->
+                onGitHub(ownerRepo, token, path)
+                showGitHubDialog = false
+            }
+        )
+    }
+
+    if (showGistDialog) {
+        GistDialog(
+            state = state,
+            onDismiss = { showGistDialog = false },
+            onConfirm = { token ->
+                onGist(token)
+                showGistDialog = false
+            }
+        )
+    }
+
+    if (showGiteeDialog) {
+        GiteeDialog(
+            state = state,
+            onDismiss = { showGiteeDialog = false },
+            onConfirm = { ownerRepo, path, token ->
+                onGitee(ownerRepo, path, token)
+                showGiteeDialog = false
+            }
+        )
+    }
+
+    pendingRemove?.let { binding ->
+        AlertDialog(
+            onDismissRequest = { pendingRemove = null },
+            title = { Text("移除「" + binding.label + "」？") },
+            text = {
+                Text(
+                    "将从此应用移除「" + binding.label + "」的配置。\n" +
+                        "只删本机配置，云端已保存的备份文件不会被删除（如需清除请到「云端数据」里删除）。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val target = binding
+                    pendingRemove = null
+                    onRemoveBinding(target)
+                }) { Text("移除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { pendingRemove = null }) { Text("取消") } }
+        )
+    }
+
+    pendingDelete?.let { target ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text("删除云端数据？") },
             text = {
                 Text(
-                    "将删除「" + type.label + "」里保存的备份文件，云端此前的备份会消失。\n" +
+                    "将删除「" + target.label + "」里保存的备份文件，云端此前的备份会消失。\n" +
                         "本机账号、分类与回收站都不受影响；下次同步会把本机数据重新上传。"
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val target = type
+                    val deleting = target
                     pendingDelete = null
-                    onDeleteCloud(target)
+                    onDeleteCloud(deleting)
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } }
@@ -294,142 +372,279 @@ fun SyncScreen(
     }
 }
 
+/** 已绑定后端的一行：名称 + 说明 + 参与同步开关 + 编辑/移除。 */
 @Composable
-private fun WebDavForm(state: SyncUiState, onWebDav: (String, String, String) -> Unit) {
-    var url by remember(state.webdavUrl) { mutableStateOf(state.webdavUrl) }
-    var user by remember(state.webdavUser) { mutableStateOf(state.webdavUser) }
-    var password by remember(state.webdavPassword) { mutableStateOf(state.webdavPassword) }
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("WebDAV", style = MaterialTheme.typography.titleSmall)
-            OutlinedTextField(url, { url = it }, label = { Text("目录地址（如 https://dav.example.com/remote.php/dav/files/me/）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(user, { user = it }, label = { Text("用户名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(password, { password = it }, label = { Text("密码 / 应用专用密码") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedButton(onClick = { onWebDav(url, user, password) }) { Text("保存并连接") }
-        }
-    }
-}
-
-@Composable
-private fun GitHubForm(state: SyncUiState, onGitHub: (String, String, String) -> Unit) {
-    var ownerRepo by remember(state.githubOwnerRepo) { mutableStateOf(state.githubOwnerRepo) }
-    var token by remember(state.githubToken) { mutableStateOf(state.githubToken) }
-    var path by remember(state.githubPath) { mutableStateOf(state.githubPath) }
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("GitHub 仓库", style = MaterialTheme.typography.titleSmall)
-            OutlinedTextField(ownerRepo, { ownerRepo = it }, label = { Text("owner/repo") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(path, { path = it }, label = { Text("文件路径") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(token, { token = it }, label = { Text("Personal Access Token（需 contents 读写）") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedButton(onClick = { onGitHub(ownerRepo, token, path) }) { Text("保存并连接") }
-        }
-    }
-}
-
-@Composable
-private fun GistForm(state: SyncUiState, onGist: (String) -> Unit) {
-    var token by remember(state.gistToken) { mutableStateOf(state.gistToken) }
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("GitHub Gist", style = MaterialTheme.typography.titleSmall)
-            OutlinedTextField(token, { token = it }, label = { Text("Personal Access Token（需 gist 权限）") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedButton(onClick = { onGist(token) }) { Text("保存并连接") }
-            Text(
-                text = if (state.gistId.isBlank()) "首次同步会自动创建一个私有 Gist 并记录 ID" else "将使用已创建的 Gist：" + state.gistId,
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-    }
-}
-
-@Composable
-private fun HintCard(title: String, body: String) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(body, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-private fun formatTime(millis: Long): String =
-    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(millis))
-/**
- * Google Drive 卡片。
- *
- * 当前实现只维护「账号邮箱」这一个 Drive 后端真正需要的输入：GoogleAccountCredential 会依据
- * 账号名与 drive.appdata 范围向 Google Play 服务申请令牌。
- *
- * 待办（方案 B 未完成）：改用 AndroidX Credential Manager + GoogleIdTokenCredential 做一键登录。
- * 相关依赖已暂时移除（避免出现「依赖已加、功能未接」的误导状态），
- * 接一键登录时再按官方示例引入并单独验证。
- */
-@Composable
-private fun GoogleDriveCard(
-    state: SyncUiState,
-    onSignIn: () -> Unit,
-    onSignOut: () -> Unit
+private fun BindingRow(
+    binding: SyncBinding,
+    onToggle: (Boolean) -> Unit,
+    onEdit: () -> Unit,
+    onRemove: () -> Unit
 ) {
-    val connected = state.googleAccount.isNotBlank()
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Google Drive", style = MaterialTheme.typography.titleSmall)
-            Text(
-                text = if (connected) {
-                    "已连接（Google 授权有效）；令牌由 Google Play 服务托管并自动刷新。"
-                } else {
-                    "尚未连接。登录后本应用只能访问它自己的隐藏目录（appDataFolder），看不到你其它 Drive 文件。"
-                },
-                style = MaterialTheme.typography.bodySmall
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onSignIn) {
-                    Text(if (connected) "重新授权" else "登录 Google 账号")
-                }
-                if (connected) {
-                    OutlinedButton(onClick = onSignOut) { Text("断开") }
-                }
-            }
-            if (!connected) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(binding.label, style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    text = "需先在 Google Cloud 控制台启用 Drive API，并建 Android 类型 OAuth 客户端，登记当前包名 + SHA-1" +
-                        "（调试包为 com.tessera.otp.debug）；无需客户端 ID。详见 docs/google-drive-setup.md。",
-                    style = MaterialTheme.typography.labelSmall
+                    text = binding.detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            Switch(checked = binding.active, onCheckedChange = onToggle)
+        }
+        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+            TextButton(onClick = onEdit) { Text(if (binding.editable) "编辑" else "重新登录") }
+            TextButton(onClick = onRemove) {
+                Text("移除", color = MaterialTheme.colorScheme.error)
+            }
         }
     }
 }
-/** Gitee（码云）表单：owner/repo、文件路径、私人令牌。 */
+
+/** 「添加同步后端」选择窗：WebDAV 可多台，其余每种只能绑一个，已绑定的不再列出。 */
 @Composable
-private fun GiteeForm(state: SyncUiState, onGitee: (String, String, String) -> Unit) {
+private fun AddBackendDialog(
+    boundTypes: Set<SyncProviderType>,
+    onDismiss: () -> Unit,
+    onPick: (SyncProviderType) -> Unit
+) {
+    val options = buildList {
+        add(SyncProviderType.WEBDAV)
+        SINGLETON_PROVIDER_ORDER.forEach { if (it !in boundTypes) add(it) }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("添加同步后端") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                options.forEach { type ->
+                    ListItem(
+                        modifier = Modifier.clickable { onPick(type) },
+                        headlineContent = { Text(type.label) },
+                        supportingContent = { Text(addHint(type)) }
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+private fun addHint(type: SyncProviderType): String = when (type) {
+    SyncProviderType.WEBDAV -> "自建或第三方的 WebDAV 目录，可添加多台并各自指定文件名"
+    SyncProviderType.GOOGLE_DRIVE -> "登录 Google 账号，只访问本应用的隐藏目录"
+    SyncProviderType.ONEDRIVE -> "登录微软账号，只访问本应用的私有文件夹"
+    SyncProviderType.GITHUB -> "写入你自己的仓库文件（需要 Personal Access Token）"
+    SyncProviderType.GIST -> "写入一个私有 Gist（需要 gist 权限的令牌）"
+    SyncProviderType.GITEE -> "写入 Gitee 仓库文件（需要私人令牌）"
+    SyncProviderType.NONE -> ""
+}
+
+/** WebDAV 服务器编辑窗口：备注名（可选）、目录地址、用户名、密码、文件名。 */
+@Composable
+private fun WebDavServerDialog(
+    initial: WebDavServer,
+    onDismiss: () -> Unit,
+    onConfirm: (WebDavServer) -> Unit
+) {
+    var label by remember { mutableStateOf(initial.label) }
+    var url by remember { mutableStateOf(initial.url) }
+    var user by remember { mutableStateOf(initial.user) }
+    var password by remember { mutableStateOf(initial.password) }
+    var fileName by remember { mutableStateOf(initial.fileName.ifBlank { "tessera.vault" }) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial.id.isBlank()) "添加 WebDAV 服务器" else "编辑 WebDAV 服务器") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it },
+                    label = { Text("备注名（可选，用于区分多个服务器）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("目录地址") },
+                    placeholder = { Text("https://dav.example.com/remote.php/dav/files/me/") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = user,
+                    onValueChange = { user = it },
+                    label = { Text("用户名") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("密码 / 应用专用密码") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = fileName,
+                    onValueChange = { fileName = it },
+                    label = { Text("文件名") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onConfirm(
+                        initial.copy(
+                            label = label.trim(),
+                            url = url.trim(),
+                            user = user.trim(),
+                            password = password,
+                            fileName = fileName.trim().ifBlank { "tessera.vault" }
+                        )
+                    )
+                },
+                enabled = url.isNotBlank()
+            ) { Text("保存并连接") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+/** GitHub 仓库绑定窗口。 */
+@Composable
+private fun GitHubDialog(
+    state: SyncUiState,
+    onDismiss: () -> Unit,
+    onConfirm: (String, String, String) -> Unit
+) {
+    var ownerRepo by remember(state.githubOwnerRepo) { mutableStateOf(state.githubOwnerRepo) }
+    var path by remember(state.githubPath) { mutableStateOf(state.githubPath) }
+    var token by remember(state.githubToken) { mutableStateOf(state.githubToken) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (state.githubToken.isBlank()) "连接 GitHub 仓库" else "编辑 GitHub 仓库") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(ownerRepo, { ownerRepo = it }, label = { Text("owner/repo") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(path, { path = it }, label = { Text("文件路径") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    token,
+                    { token = it },
+                    label = { Text("Personal Access Token（需 contents 读写）") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(ownerRepo.trim(), token.trim(), path.trim().ifBlank { "tessera.vault" }) },
+                enabled = ownerRepo.count { it == '/' } == 1 && token.isNotBlank()
+            ) { Text("保存并连接") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+/** GitHub Gist 绑定窗口。 */
+@Composable
+private fun GistDialog(
+    state: SyncUiState,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var token by remember(state.gistToken) { mutableStateOf(state.gistToken) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (state.gistToken.isBlank()) "连接 GitHub Gist" else "编辑 GitHub Gist") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    token,
+                    { token = it },
+                    label = { Text("Personal Access Token（需 gist 权限）") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = if (state.gistId.isBlank()) "首次同步会自动创建一个私有 Gist 并记录 ID"
+                    else "将使用已创建的 Gist：" + state.gistId,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(token.trim()) }, enabled = token.isNotBlank()) { Text("保存并连接") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+/** Gitee（码云）绑定窗口：owner/repo、文件路径、私人令牌。 */
+@Composable
+private fun GiteeDialog(
+    state: SyncUiState,
+    onDismiss: () -> Unit,
+    onConfirm: (String, String, String) -> Unit
+) {
     var ownerRepo by remember(state.giteeOwnerRepo) { mutableStateOf(state.giteeOwnerRepo) }
     var path by remember(state.giteePath) { mutableStateOf(state.giteePath) }
     var token by remember(state.giteeToken) { mutableStateOf(state.giteeToken) }
 
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Gitee", style = MaterialTheme.typography.titleSmall)
-            OutlinedTextField(ownerRepo, { ownerRepo = it }, label = { Text("owner/repo") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(path, { path = it }, label = { Text("文件路径") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(
-                token,
-                { token = it },
-                label = { Text("私人令牌") },
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedButton(onClick = { onGitee(ownerRepo, path, token) }) { Text("保存并连接") }
-            Text(
-                text = "令牌在 Gitee → 设置 → 私人令牌创建，需勾选 projects 权限；需先在仓库里建好目标分支（默认 master）。",
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-    }
-
-    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (state.giteeToken.isBlank()) "连接 Gitee" else "编辑 Gitee") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(ownerRepo, { ownerRepo = it }, label = { Text("owner/repo") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(path, { path = it }, label = { Text("文件路径") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    token,
+                    { token = it },
+                    label = { Text("私人令牌") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "令牌在 Gitee → 设置 → 私人令牌创建，需勾选 projects 权限；需先在仓库里建好目标分支（默认 master）。",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(ownerRepo.trim(), path.trim().ifBlank { "tessera.vault" }, token.trim()) },
+                enabled = ownerRepo.count { it == '/' } == 1 && token.isNotBlank()
+            ) { Text("保存并连接") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
 }
+
 /** 同步口令的二级窗口：设置/修改口令。口令用于加密云端同步包，丢失后云端数据无法解密。 */
 @Composable
 private fun PassphraseDialog(
@@ -467,40 +682,6 @@ private fun PassphraseDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
 }
-/** OneDrive 卡片：显示连接状态，提供登录 / 重新登录 / 断开。 */
-@Composable
-private fun OneDriveCard(
-    state: SyncUiState,
-    onSignIn: () -> Unit,
-    onSignOut: () -> Unit
-) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("OneDrive", style = MaterialTheme.typography.titleSmall)
-            Text(
-                text = if (state.oneDriveConnected) {
-                    "已连接微软账号；令牌过期会自动用 refresh token 续期。"
-                } else {
-                    "尚未连接。登录后本应用只能访问它自己的私有文件夹（approot），看不到你其它 OneDrive 文件。"
-                },
-                style = MaterialTheme.typography.bodySmall
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onSignIn) {
-                    Text(if (state.oneDriveConnected) "重新登录" else "登录微软账号")
-                }
-                if (state.oneDriveConnected) {
-                    OutlinedButton(onClick = onSignOut) { Text("断开") }
-                }
-            }
-            if (!state.oneDriveConnected) {
-                Text(
-                    text = "需先在 Azure 应用注册中登记重定向 URI tessera://auth 与委派权限 Files.ReadWrite.AppFolder，" +
-                        "再把客户端 ID 写入项目根目录 local.properties 的 ONEDRIVE_CLIENT_ID。",
-                    style = MaterialTheme.typography.labelSmall
-                )
-            }
-        }
-    }
-}
 
+private fun formatTime(millis: Long): String =
+    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(millis))

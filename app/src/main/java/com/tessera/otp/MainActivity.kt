@@ -583,8 +583,7 @@ private fun AppShell(
                         model = model,
                         onBack = model::back,
                         onOneDriveSignIn = onOneDriveSignIn,
-                        onGoogleSignIn = onGoogleSignIn,
-                        onOneDriveSignOut = { model.sync.signOutOneDrive() }
+                        onGoogleSignIn = onGoogleSignIn
                     )
                 }
             }
@@ -660,7 +659,6 @@ private fun SyncRoute(
     model: MainViewModel,
     onBack: () -> Unit,
     onOneDriveSignIn: () -> Unit,
-    onOneDriveSignOut: () -> Unit,
     onGoogleSignIn: () -> Unit
 ) {
     BackHandler(onBack = onBack)
@@ -679,10 +677,9 @@ private fun SyncRoute(
         androidx.compose.foundation.layout.Box(Modifier.padding(padding)) {
             SyncScreen(
                 state = state,
-                onSelectProvider = model.sync::selectProvider,
                 onPassphraseChange = model.sync::updatePassphraseInput,
                 onSavePassphrase = model.sync::savePassphrase,
-                onWebDav = model.sync::setWebDav,
+                onSaveWebDavServer = model.sync::saveWebDavServer,
                 onGitHub = model.sync::setGitHub,
                 onGist = model.sync::setGist,
                 onGitee = model.sync::setGitee,
@@ -691,10 +688,9 @@ private fun SyncRoute(
                     model.scheduleSync(interval)
                 },
                 onGoogleSignIn = onGoogleSignIn,
-                onToggleProvider = model.sync::toggleProvider,
-                onClearGoogleAccount = model.sync::clearGoogleAccount,
                 onOneDriveSignIn = onOneDriveSignIn,
-                onOneDriveSignOut = onOneDriveSignOut,
+                onRemoveBinding = model.sync::removeBinding,
+                onToggleBinding = model.sync::setBindingActive,
                 onDeleteCloud = model.sync::deleteCloud,
                 onSyncNow = model.sync::runManualSync,
                 onSyncEnabled = model.sync::setSyncEnabled

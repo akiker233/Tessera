@@ -88,10 +88,9 @@ class WebDavProvider(
     private val baseUrl: String,
     private val user: String,
     private val password: String,
-    private val fileName: String = "tessera.vault"
+    private val fileName: String = "tessera.vault",
+    override val displayName: String = "WebDAV"
 ) : SyncProvider {
-
-    override val displayName = "WebDAV"
 
     private fun fileUrl(): String {
         val base = baseUrl.trim().trimEnd('/')
