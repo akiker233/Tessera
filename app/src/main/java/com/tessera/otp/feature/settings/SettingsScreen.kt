@@ -1,19 +1,35 @@
 package com.tessera.otp.feature.settings
 
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -35,9 +51,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.tessera.otp.BuildConfig
+import com.tessera.otp.R
 import com.tessera.otp.data.prefs.AppSettings
 import com.tessera.otp.data.prefs.AutoLockDelay
 import com.tessera.otp.data.prefs.ListDensity
@@ -63,6 +85,7 @@ data class SettingsActions(
     val onListDensity: (ListDensity) -> Unit,
     val onOpenExport: () -> Unit,
     val onOpenCategories: () -> Unit,
+    val onOpenAbout: () -> Unit,
     val onSyncNetworkTime: () -> Unit
 )
 
@@ -113,6 +136,7 @@ fun SettingsScreen(
                     subtitle = "主题：" + themeLabel + " · 列表：" + densityLabel +
                         " · 验证码：" + (if (settings.codesVisible) "显示" else "隐藏") +
                         " · 下一令牌：" + nextTokenSummary(settings.nextTokenThresholdSeconds),
+                    icon = Icons.Filled.Palette,
                     onClick = { onOpenSection(SettingsSection.APPEARANCE) }
                 )
                 HorizontalDivider()
@@ -120,12 +144,14 @@ fun SettingsScreen(
                     title = SettingsSection.SECURITY.title,
                     subtitle = "自动锁定：" + (if (settings.autoLockEnabled && hasPin) "开（" + delayLabel + "）" else "关") +
                         " · PIN：" + (if (hasPin) "已设置" else "未设置"),
+                    icon = Icons.Filled.Lock,
                     onClick = { onOpenSection(SettingsSection.SECURITY) }
                 )
                 HorizontalDivider()
                 ChoiceRow(
                     title = SettingsSection.TIME.title,
                     subtitle = timeStatusText,
+                    icon = Icons.Filled.AccessTime,
                     onClick = { onOpenSection(SettingsSection.TIME) }
                 )
                 HorizontalDivider()
@@ -133,6 +159,7 @@ fun SettingsScreen(
                     title = SettingsSection.DATA.title,
                     subtitle = "回收站保留 " + settings.trashRetentionDays + " 天 · 自动同步 " +
                         (if (settings.syncEnabled) intervalLabel else "已关闭"),
+                    icon = Icons.Filled.Storage,
                     onClick = { onOpenSection(SettingsSection.DATA) }
                 )
             }
@@ -143,7 +170,17 @@ fun SettingsScreen(
             ChoiceRow(
                 title = "分类管理",
                 subtitle = "新建 / 重命名 / 改色 / 删除 / 排序 · 选择账号归类（首页可按分类分组查看）",
+                icon = Icons.Filled.Category,
                 onClick = actions.onOpenCategories
+            )
+        }
+
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            ChoiceRow(
+                title = "关于",
+                subtitle = "版本 " + BuildConfig.VERSION_NAME + " · 开源许可与项目地址",
+                icon = Icons.Filled.Info,
+                onClick = actions.onOpenAbout
             )
         }
     }
@@ -164,6 +201,91 @@ fun SettingsSubRoute(
         SettingsSection.SECURITY -> SecuritySettingsScreen(settings, hasPin, actions, onBack)
         SettingsSection.TIME -> TimeSettingsScreen(timeStatusText, actions, onBack)
         SettingsSection.DATA -> DataSettingsScreen(settings, actions, onBack)
+    }
+}
+
+/** 关于页：版本、开源许可与项目地址。 */
+@Composable
+fun AboutScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+
+    SettingsPage("关于", onBack) {
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AppIconBadge(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                )
+                Text("Tessera · 凭牌", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    text = "版本 " + BuildConfig.VERSION_NAME + "（build " + BuildConfig.VERSION_CODE + "）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Column {
+                InfoRow(title = "版本", value = BuildConfig.VERSION_NAME + "（build " + BuildConfig.VERSION_CODE + "）")
+                HorizontalDivider()
+                InfoRow(title = "开源许可", value = "GNU General Public License v3.0")
+                HorizontalDivider()
+                ChoiceRow(
+                    title = "项目主页",
+                    subtitle = REPO_URL.removePrefix("https://"),
+                    icon = Icons.Filled.Public,
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(REPO_URL)))
+                        }
+                    }
+                )
+            }
+        }
+
+        Text(
+            text = "本地优先的 TOTP 验证器：条目密钥由 Android Keystore 主密钥加密后写入加密数据库，" +
+                "云同步包用独立的同步口令加密，服务商只能看到密文。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = "Copyright (C) 2026 akiker233 · 基于 GPL-3.0 发布，不提供任何担保。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+private const val REPO_URL = "https://github.com/akiker233/Tessera"
+
+/**
+ * 应用图标。启动图标是自适应图标（XML 图层），Compose 的 painterResource 只能加载矢量/位图资源，
+ * 因此这里把真实图标画进位图再显示——顺带拿到与桌面完全一致的观感。
+ */
+@Composable
+private fun AppIconBadge(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val icon = remember {
+        runCatching {
+            val px = (96 * context.resources.displayMetrics.density).toInt()
+            val drawable = context.getDrawable(R.mipmap.ic_launcher) ?: return@runCatching null
+            drawable.setBounds(0, 0, px, px)
+            val bitmap = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
+            drawable.draw(Canvas(bitmap))
+            bitmap.asImageBitmap()
+        }.getOrNull()
+    }
+    if (icon != null) {
+        Image(bitmap = icon, contentDescription = null, modifier = modifier)
     }
 }
 
@@ -497,12 +619,47 @@ private fun SwitchRow(
 }
 
 @Composable
-private fun ChoiceRow(title: String, subtitle: String, onClick: () -> Unit) {
+private fun ChoiceRow(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    icon: ImageVector? = null
+) {
+    // 用 Row 而非 ListItem：ListItem 的 leading/trailing 是垂直居中的，
+    // 副标题一换行图标就被压到整行中间，与只有一行副标题的行对不齐。
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null)
+            Spacer(Modifier.width(16.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            modifier = Modifier.align(Alignment.CenterVertically)
+        )
+    }
+}
+
+/** 只读信息行：没有点击行为，因此不带右侧箭头。 */
+@Composable
+private fun InfoRow(title: String, value: String) {
     ListItem(
-        modifier = Modifier.clickable(onClick = onClick),
         headlineContent = { Text(title) },
-        supportingContent = { Text(subtitle, style = MaterialTheme.typography.bodySmall) },
-        trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null) }
+        supportingContent = { Text(value, style = MaterialTheme.typography.bodySmall) }
     )
 }
 

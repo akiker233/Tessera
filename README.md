@@ -27,8 +27,8 @@
 Tessera（凭牌）是一款纯本地的双因素认证（TOTP）应用。验证码全部在设备上生成，条目密钥经 Android Keystore 主密钥加密后写入 SQLCipher 数据库；如需跨设备，还可把**端到端加密**的备份同步到你自己的云盘或代码托管平台——服务商只能看到密文。
 
 - 🔐 **本地优先**：数据库 SQLCipher 加密，条目密钥由 Keystore 独立包裹，主密钥不出安全硬件。
-- ☁️ **自带云**：WebDAV / GitHub / Gist / Gitee / Google Drive / OneDrive，6 种后端任选，可同时启用多个。
-- 👥 **多账号**：WebDAV、Google Drive、OneDrive 均支持配置**多个账号/服务器**分别同步。
+- ☁️ **自带云**：WebDAV / S3 对象存储 / GitHub / Gist / Gitee / Google Drive / OneDrive，7 种后端任选，可同时启用多个。
+- 👥 **多账号**：WebDAV、S3 对象存储、Google Drive、OneDrive 均支持配置**多个账号/服务器/桶**分别同步，每种后端都可起备注名加以区分。
 - 📥 **易迁移**：支持 2FAS、Aegis、andOTP、Raivo、LastPass、Stratum、Google Authenticator 等来源导入。
 - 🎨 **现代 UI**：Jetpack Compose + Material 3 + 动态取色，内置 1900+ 服务图标。
 
@@ -38,8 +38,8 @@ Tessera（凭牌）是一款纯本地的双因素认证（TOTP）应用。验证
 |---|---|
 | TOTP 生成 | RFC 6238，SHA1/SHA256/SHA512、6/7/8 位、自定义周期，兼容 Steam 字母表 |
 | 服务图标 | `app/src/main/assets/icons/` 内 1954 张 WebP 全量打包，按 issuer 归一化（NFKC → 去符号 → 小写）匹配 1923 个索引键，支持 `_light`/`_dark` 变体 |
-| 云同步 | 6 种后端；手动 + WorkManager 自动同步（15 分钟 ~ 1 天）；条目级 `syncRev` → `updatedAt` 合并，删除以墓碑参与，绝不盲写覆盖 |
-| 多账号 | WebDAV / Google Drive / OneDrive 可添加多份配置，各自独立绑定、独立启停 |
+| 云同步 | 7 种后端；手动 + WorkManager 自动同步（15 分钟 ~ 1 天）；条目级 `syncRev` → `updatedAt` 合并，删除以墓碑参与，绝不盲写覆盖 |
+| 多账号 | WebDAV / S3 对象存储 / Google Drive / OneDrive 可添加多份配置，各自独立绑定、独立启停；每种后端都能起备注名，同步结果里按备注名区分 |
 | 云端数据管理 | 可查看各后端上的备份并单独删除 |
 | 导入 | 2FAS / Stratum / Aegis / andOTP / Raivo OTP / LastPass / Google Authenticator，自动识别来源、失败隔离 |
 | 拍照导入 | CameraX 实时扫码 + 相册图片识别（离线捆绑版 ML Kit，无 Play 服务也能解码） |
@@ -112,7 +112,7 @@ pwsh -File tools/gen_icon_index.ps1
 
 ## 云同步配置
 
-WebDAV / GitHub 仓库 / GitHub Gist / Gitee 无需开发者账号：在应用内「云同步」处填写地址与令牌即可，凭据经 Keystore 加密后落盘。
+WebDAV / S3 对象存储 / GitHub 仓库 / GitHub Gist / Gitee 无需开发者账号：在应用内「云同步」处填写地址与令牌即可，凭据经 Keystore 加密后落盘。S3 兼容 AWS S3、Cloudflare R2、Backblaze B2、MinIO、阿里云 OSS、腾讯云 COS 等，填写 Endpoint / 区域 / 桶名 / Access Key 即可，自建 MinIO 等不支持虚拟主机风格时可打开「强制路径风格」。
 
 Google Drive 与 OneDrive 需要在对应平台注册应用（后端调用与应用内授权均已实现）：
 
@@ -143,7 +143,7 @@ app/src/main/java/com/tessera/otp/
 │   └── icon/      图标归一化与索引加载
 ├── domain/        TOTP 引擎、otpauth URI 解析
 ├── importer/      各来源导入器与来源识别
-├── sync/          同步引擎、合并、编解码、6 个后端 Provider、授权（Google / OneDrive）、WorkManager
+├── sync/          同步引擎、合并、编解码、7 个后端 Provider、授权（Google / OneDrive）、WorkManager
 ├── feature/       Compose 界面：home / add / detail / scan / importer / iconpicker / settings / sync / trash / exporter
 ├── ui/            主题（动态取色）与应用锁
 └── di/            轻量依赖装配
@@ -151,7 +151,7 @@ app/src/main/java/com/tessera/otp/
 
 ## 测试
 
-纯 JVM 单元测试，无需模拟器：**95 个用例 / 11 个测试类**。
+纯 JVM 单元测试，无需模拟器：**123 个用例 / 12 个测试类**。
 
 ```bash
 ./gradlew :app:testDebugUnitTest --no-configuration-cache
@@ -164,7 +164,8 @@ app/src/main/java/com/tessera/otp/
 | `ImporterTest` | 七种来源样本、来源自动识别、失败隔离 |
 | `IconNormalizerTest` | 真实图标文件名的命名陷阱（多点号、Unicode、`_light`/`_dark`、全角） |
 | `MergeTest` / `CategorySyncTest` / `SyncPortableTest` | 合并与冲突、分类同步、可移植格式 |
-| `SyncTargetsTest` | 多 WebDAV/Google/OneDrive 目标构造、绑定键、停用集合、旧配置迁移 |
+| `SyncTargetsTest` | 多 WebDAV/S3/Google/OneDrive 目标构造、绑定键、停用集合、旧配置迁移 |
+| `S3ProviderTest` | AWS SigV4 签名向量（路径/虚拟主机风格、会话令牌、删除）、地址解析与端口处理、路径编码、`objectKey` 归一化、本地 HTTP 服务端往返 |
 | `ExporterTest` / `TesseraBackupTest` | 导出格式与备份往返 |
 | `SkeletonTest` | 冒烟 |
 

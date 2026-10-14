@@ -35,8 +35,12 @@ sealed interface Screen {
     data object IconPicker : Screen
     data object Import : Screen
     data object Sync : Screen
+    /** 云同步的二级页：后端绑定与云端数据管理。 */
+    data object SyncBackends : Screen
     data object Export : Screen
     data object Categories : Screen
+    /** 关于页（版本、许可）。 */
+    data object About : Screen
     /** 分类归类页：把账号多选归入 categoryId 指定的分类。 */
     data class CategoryAssign(val categoryId: String) : Screen
     data class Edit(val accountId: String?) : Screen

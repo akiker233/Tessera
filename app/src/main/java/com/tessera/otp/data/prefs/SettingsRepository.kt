@@ -52,6 +52,7 @@ enum class ListDensity(val label: String, val rowPadding: Int, val codeSize: Int
 enum class SyncProviderType(val label: String) {
     NONE("未配置"),
     WEBDAV("WebDAV"),
+    S3("S3 对象存储"),
     GIST("GitHub Gist"),
     GITHUB("GitHub 仓库"),
     GITEE("Gitee"),
@@ -90,6 +91,42 @@ val WebDavServer.displayLabel: String
         return if (path.isBlank()) host else host + "/" + path
     }
 
+/**
+ * 一条 S3 兼容对象存储配置（AWS S3 / Cloudflare R2 / MinIO / 阿里云 OSS / 腾讯云 COS …）。
+ *
+ * [endpoint] 只填到主机（如 `https://s3.us-east-1.amazonaws.com`、`http://192.168.1.5:9000`），
+ * 桶名单独填；MinIO 一类不支持虚拟主机风格的必须打开 [forcePathStyle]。
+ * [prefix] 是桶内的目录前缀，[fileName] 决定对象名，同一桶里可放多份互不干扰的备份。
+ */
+@Serializable
+data class S3Account(
+    val id: String,
+    val label: String = "",
+    val endpoint: String = "",
+    val region: String = "us-east-1",
+    val bucket: String = "",
+    val accessKey: String = "",
+    val secretKey: String = "",
+    val sessionToken: String = "",
+    val prefix: String = "",
+    val fileName: String = "tessera.vault",
+    val forcePathStyle: Boolean = false
+)
+
+/** 展示名：优先用备注名，否则「桶名 · 主机」。 */
+val S3Account.displayLabel: String
+    get() {
+        if (label.isNotBlank()) return label.trim()
+        val raw = endpoint.trim().trimEnd('/')
+        val host = raw.substringAfter("://", raw).substringBefore("/")
+        return when {
+            bucket.isBlank() && host.isBlank() -> "S3"
+            bucket.isBlank() -> host
+            host.isBlank() -> bucket
+            else -> bucket + " · " + host
+        }
+    }
+
 data class AppSettings(
     val codesVisible: Boolean = true,
     /** 剩余秒数 <= 该阈值时显示下一个验证码。 */
@@ -123,21 +160,51 @@ data class AppSettings(
     val lastSyncPulled: Int = 0,
     /** 已配置的 WebDAV 服务器列表（可多个，各自启用）。 */
     val webdavServers: List<WebDavServer> = emptyList(),
+    /** 已配置的 S3 兼容对象存储列表（可多个，各自启用）。 */
+    val s3Accounts: List<S3Account> = emptyList(),
     /**
      * 已绑定的 Google Drive 账号（邮箱）。可多个，各自独立同步一份备份。
      *
      * 令牌由 Play Services 托管、应用侧无法枚举，因此这里必须自己记录绑定了哪些账号。
      */
     val googleAccounts: List<String> = emptyList(),
+    /** Google Drive 每个账号的备注名（账号 id → 备注），用于区分同类多个账号。 */
+    val googleAccountLabels: Map<String, String> = emptyMap(),
+    /** OneDrive 每个账号的备注名（账号 id → 备注）；账号清单由 `OneDriveAuth` 侧维护。 */
+    val oneDriveAccountLabels: Map<String, String> = emptyMap(),
     val githubOwnerRepo: String = "",
     val githubPath: String = "tessera.vault",
+    val githubLabel: String = "",
     val gistId: String = "",
     val githubToken: String = "",
     val giteeOwnerRepo: String = "",
     val giteePath: String = "tessera.vault",
+    val giteeLabel: String = "",
     val giteeToken: String = "",
-    val gistToken: String = ""
+    val gistToken: String = "",
+    val gistLabel: String = ""
 )
+
+/** 单实例后端的展示名：备注名优先，否则用类型名（有备注时写成「GitHub 仓库（家里）」）。 */
+private fun singletonDisplayLabel(label: String, type: SyncProviderType): String =
+    if (label.isBlank()) type.label else type.label + "（" + label.trim() + "）"
+
+val AppSettings.githubDisplayLabel: String
+    get() = singletonDisplayLabel(githubLabel, SyncProviderType.GITHUB)
+
+val AppSettings.gistDisplayLabel: String
+    get() = singletonDisplayLabel(gistLabel, SyncProviderType.GIST)
+
+val AppSettings.giteeDisplayLabel: String
+    get() = singletonDisplayLabel(giteeLabel, SyncProviderType.GITEE)
+
+/** Google Drive 单个账号的展示名：有备注用备注，否则回落账号邮箱。 */
+fun AppSettings.googleDriveAccountLabel(accountId: String): String =
+    googleAccountLabels[accountId]?.trim()?.takeIf { it.isNotEmpty() } ?: accountDisplayName(accountId)
+
+/** OneDrive 单个账号的展示名：有备注用备注，否则回落账号名。 */
+fun AppSettings.oneDriveAccountLabel(accountId: String): String =
+    oneDriveAccountLabels[accountId]?.trim()?.takeIf { it.isNotEmpty() } ?: accountDisplayName(accountId)
 
 class SettingsRepository(private val context: Context) {
 
@@ -168,19 +235,26 @@ class SettingsRepository(private val context: Context) {
         val WEBDAV_URL = stringPreferencesKey("webdav_url")
         val WEBDAV_USER = stringPreferencesKey("webdav_user")
         val WEBDAV_SERVERS = stringPreferencesKey("webdav_servers")
+        val S3_ACCOUNTS = stringPreferencesKey("s3_accounts")
         val GITHUB_OWNER_REPO = stringPreferencesKey("github_owner_repo")
         val GITHUB_PATH = stringPreferencesKey("github_path")
+        val GITHUB_LABEL = stringPreferencesKey("github_label")
         val GIST_ID = stringPreferencesKey("gist_id")
         val WEBDAV_PASSWORD = stringPreferencesKey("webdav_password")
         val GITHUB_TOKEN = stringPreferencesKey("github_token")
         val GITEE_OWNER_REPO = stringPreferencesKey("gitee_owner_repo")
         val GITEE_PATH = stringPreferencesKey("gitee_path")
+        val GITEE_LABEL = stringPreferencesKey("gitee_label")
         val GITEE_TOKEN = stringPreferencesKey("gitee_token")
         /** 旧版「Google 是否已授权」标记（内容是常量文案，不含邮箱）；仅用于迁移出账号列表。 */
         val LEGACY_GOOGLE_ACCOUNT = stringPreferencesKey("google_account")
         val GOOGLE_ACCOUNTS = stringPreferencesKey("google_accounts")
+        /** 各后端备注名：Google Drive / OneDrive 按账号 id 存成 JSON 映射，其余是单条字符串。 */
+        val GOOGLE_ACCOUNT_LABELS = stringPreferencesKey("google_account_labels")
+        val ONEDRIVE_ACCOUNT_LABELS = stringPreferencesKey("onedrive_account_labels")
         val SYNC_ENABLED = booleanPreferencesKey("sync_enabled")
         val GIST_TOKEN = stringPreferencesKey("gist_token")
+        val GIST_LABEL = stringPreferencesKey("gist_label")
     }
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { p ->
@@ -206,15 +280,21 @@ class SettingsRepository(private val context: Context) {
             lastSyncPushed = p[Keys.LAST_SYNC_PUSHED] ?: 0,
             lastSyncPulled = p[Keys.LAST_SYNC_PULLED] ?: 0,
             webdavServers = readWebDavServers(p),
+            s3Accounts = readS3Accounts(p),
             googleAccounts = readGoogleAccounts(p),
+            googleAccountLabels = readLabelMap(p[Keys.GOOGLE_ACCOUNT_LABELS]),
+            oneDriveAccountLabels = readLabelMap(p[Keys.ONEDRIVE_ACCOUNT_LABELS]),
             githubOwnerRepo = p[Keys.GITHUB_OWNER_REPO] ?: "",
             githubPath = p[Keys.GITHUB_PATH] ?: "tessera.vault",
+            githubLabel = p[Keys.GITHUB_LABEL] ?: "",
             gistId = p[Keys.GIST_ID] ?: "",
             githubToken = p[Keys.GITHUB_TOKEN] ?: "",
             giteeOwnerRepo = p[Keys.GITEE_OWNER_REPO] ?: "",
             giteePath = p[Keys.GITEE_PATH] ?: "tessera.vault",
+            giteeLabel = p[Keys.GITEE_LABEL] ?: "",
             giteeToken = p[Keys.GITEE_TOKEN] ?: "",
-            gistToken = p[Keys.GIST_TOKEN] ?: ""
+            gistToken = p[Keys.GIST_TOKEN] ?: "",
+            gistLabel = p[Keys.GIST_LABEL] ?: ""
         )
     }
 
@@ -246,9 +326,24 @@ class SettingsRepository(private val context: Context) {
         it.remove(Keys.WEBDAV_USER)
         it.remove(Keys.WEBDAV_PASSWORD)
     }
+    /** 保存整个 S3 存储列表（可多条，各自独立同步）。 */
+    suspend fun setS3Accounts(accounts: List<S3Account>) = edit {
+        it[Keys.S3_ACCOUNTS] = configJson.encodeToString(accounts)
+    }
     suspend fun setGitHub(ownerRepo: String, path: String) = edit {
         it[Keys.GITHUB_OWNER_REPO] = ownerRepo
         it[Keys.GITHUB_PATH] = path
+    }
+    /** 单实例后端的备注名（空串 = 用类型名展示）。 */
+    suspend fun setGitHubLabel(label: String) = edit { it[Keys.GITHUB_LABEL] = label }
+    suspend fun setGiteeLabel(label: String) = edit { it[Keys.GITEE_LABEL] = label }
+    suspend fun setGistLabel(label: String) = edit { it[Keys.GIST_LABEL] = label }
+    /** 保存整个账号备注映射；调用方负责在增删账号时同步增删对应键。 */
+    suspend fun setGoogleAccountLabels(labels: Map<String, String>) = edit {
+        it[Keys.GOOGLE_ACCOUNT_LABELS] = configJson.encodeToString(labels)
+    }
+    suspend fun setOneDriveAccountLabels(labels: Map<String, String>) = edit {
+        it[Keys.ONEDRIVE_ACCOUNT_LABELS] = configJson.encodeToString(labels)
     }
     suspend fun setGistId(id: String) = edit { it[Keys.GIST_ID] = id }
     suspend fun setGitHubToken(token: String) = edit { it[Keys.GITHUB_TOKEN] = token }
@@ -294,6 +389,18 @@ class SettingsRepository(private val context: Context) {
                 password = p[Keys.WEBDAV_PASSWORD] ?: ""
             )
         )
+    }
+
+    /** 读取 S3 存储列表（纯新增的键，没有旧版配置需要迁移）。 */
+    private fun readS3Accounts(p: Preferences): List<S3Account> {
+        val raw = p[Keys.S3_ACCOUNTS] ?: return emptyList()
+        return runCatching { configJson.decodeFromString<List<S3Account>>(raw) }.getOrDefault(emptyList())
+    }
+
+    /** 读取「账号 id → 备注名」映射（纯新增的键）。 */
+    private fun readLabelMap(raw: String?): Map<String, String> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return runCatching { configJson.decodeFromString<Map<String, String>>(raw) }.getOrDefault(emptyMap())
     }
 
     /**
@@ -353,6 +460,7 @@ fun accountDisplayName(id: String): String = if (id == LEGACY_ACCOUNT_ID) "默�
  */
 val MULTI_INSTANCE_PROVIDER_ORDER = listOf(
     SyncProviderType.WEBDAV,
+    SyncProviderType.S3,
     SyncProviderType.GOOGLE_DRIVE,
     SyncProviderType.ONEDRIVE
 )
@@ -370,6 +478,9 @@ val ADD_PROVIDER_ORDER = MULTI_INSTANCE_PROVIDER_ORDER + SINGLETON_PROVIDER_ORDE
 /** WebDAV 每个服务器一条绑定，键带这个前缀。 */
 const val WEBDAV_BINDING_PREFIX = "WEBDAV:"
 
+/** S3 每条存储配置一条绑定，键带这个前缀。 */
+const val S3_BINDING_PREFIX = "S3:"
+
 /** Google Drive 每个账号一条绑定，键带这个前缀。 */
 const val GOOGLE_DRIVE_BINDING_PREFIX = "GOOGLE_DRIVE:"
 
@@ -377,6 +488,8 @@ const val GOOGLE_DRIVE_BINDING_PREFIX = "GOOGLE_DRIVE:"
 const val ONEDRIVE_BINDING_PREFIX = "ONEDRIVE:"
 
 fun webdavBindingKey(serverId: String): String = WEBDAV_BINDING_PREFIX + serverId
+
+fun s3BindingKey(accountId: String): String = S3_BINDING_PREFIX + accountId
 
 fun googleDriveBindingKey(accountId: String): String = GOOGLE_DRIVE_BINDING_PREFIX + accountId
 

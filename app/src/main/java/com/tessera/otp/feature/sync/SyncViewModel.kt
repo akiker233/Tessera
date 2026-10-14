@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.work.WorkManager
 import com.tessera.otp.data.prefs.AppSettings
 import com.tessera.otp.data.prefs.LEGACY_ACCOUNT_ID
+import com.tessera.otp.data.prefs.S3Account
 import com.tessera.otp.data.prefs.SINGLETON_PROVIDER_ORDER
 import com.tessera.otp.data.prefs.SettingsRepository
 import com.tessera.otp.data.prefs.SyncInterval
@@ -12,12 +13,19 @@ import com.tessera.otp.data.prefs.SyncProviderType
 import com.tessera.otp.data.prefs.WebDavServer
 import com.tessera.otp.data.prefs.accountDisplayName
 import com.tessera.otp.data.prefs.displayLabel
+import com.tessera.otp.data.prefs.gistDisplayLabel
+import com.tessera.otp.data.prefs.giteeDisplayLabel
+import com.tessera.otp.data.prefs.githubDisplayLabel
+import com.tessera.otp.data.prefs.googleDriveAccountLabel
 import com.tessera.otp.data.prefs.googleDriveBindingKey
+import com.tessera.otp.data.prefs.oneDriveAccountLabel
 import com.tessera.otp.data.prefs.oneDriveBindingKey
+import com.tessera.otp.data.prefs.s3BindingKey
 import com.tessera.otp.data.prefs.webdavBindingKey
 import com.tessera.otp.data.repo.AccountRepository
 import com.tessera.otp.sync.GoogleDriveAuth
 import com.tessera.otp.sync.OneDriveAuth
+import com.tessera.otp.sync.S3Provider
 import com.tessera.otp.sync.SyncCodec
 import com.tessera.otp.sync.SyncEngine
 import com.tessera.otp.sync.SyncOutcome
@@ -40,6 +48,8 @@ data class SyncUiState(
     val passphraseInput: String = "",
     /** 已配置的 WebDAV 服务器列表（可多个，各自启用与文件名）。 */
     val webdavServers: List<WebDavServer> = emptyList(),
+    /** 已配置的 S3 对象存储列表（可多个，各自端点、桶与文件名）。 */
+    val s3Accounts: List<S3Account> = emptyList(),
     val githubOwnerRepo: String = "",
     val githubPath: String = "tessera.vault",
     val githubToken: String = "",
@@ -48,6 +58,13 @@ data class SyncUiState(
     val giteeOwnerRepo: String = "",
     val giteePath: String = "tessera.vault",
     val giteeToken: String = "",
+    /** 单实例后端的备注名（空串 = 用类型名展示）。 */
+    val githubLabel: String = "",
+    val gistLabel: String = "",
+    val giteeLabel: String = "",
+    /** Google Drive / OneDrive 各账号的备注名（账号 id → 备注）。 */
+    val googleAccountLabels: Map<String, String> = emptyMap(),
+    val oneDriveAccountLabels: Map<String, String> = emptyMap(),
     /** 是否存在已连接的 OneDrive 账号（界面用它决定"登录"还是"再添加账号"）。 */
     val oneDriveConnected: Boolean = false,
     /** 已绑定的后端（顺序即界面顺序）：只有绑定成功的才显示在页面上。 */
@@ -74,7 +91,7 @@ data class SyncBinding(
     /** 副标题：账号 / 地址 / 文件名 / 仓库路径，用于区分同类多个实例。 */
     val detail: String,
     val type: SyncProviderType,
-    /** 多实例后端的实例 id：WebDAV 是服务器 id，Google Drive / OneDrive 是账号 id。 */
+    /** 多实例后端的实例 id：WebDAV / S3 是配置条目 id，Google Drive / OneDrive 是账号 id。 */
     val instanceId: String? = null,
     /** 是否参与同步；关闭只是不同步，配置仍然保留。 */
     val active: Boolean = true,
@@ -113,7 +130,7 @@ class SyncViewModel(
             _state.value = _state.value.copy(
                 passphraseSet = !passphraseStore.passphrase.isNullOrBlank(),
                 webdavServers = current.webdavServers,
-                githubOwnerRepo = current.githubOwnerRepo,
+                s3Accounts = current.s3Accounts,
                 githubPath = current.githubPath,
                 githubToken = current.githubToken,
                 gistToken = current.gistToken,
@@ -121,6 +138,11 @@ class SyncViewModel(
                 giteeOwnerRepo = current.giteeOwnerRepo,
                 giteePath = current.giteePath,
                 giteeToken = current.giteeToken,
+                githubLabel = current.githubLabel,
+                gistLabel = current.gistLabel,
+                giteeLabel = current.giteeLabel,
+                googleAccountLabels = current.googleAccountLabels,
+                oneDriveAccountLabels = current.oneDriveAccountLabels,
                 oneDriveConnected = oneDrive.isNotEmpty(),
                 bindings = bindingsOf(current, oneDrive),
                 interval = runCatching { SyncInterval.valueOf(current.syncIntervalName) }.getOrDefault(SyncInterval.OFF),
@@ -153,13 +175,28 @@ class SyncViewModel(
                 )
             )
         }
-        // Google Drive：一个账号一行，标题就是账号（与 WebDAV 用备注名做标题同一套口径）
+        s.s3Accounts.forEach { account ->
+            val key = s3BindingKey(account.id)
+            add(
+                SyncBinding(
+                    key = key,
+                    label = account.displayLabel,
+                    detail = "S3 · 区域 " + account.region.ifBlank { "us-east-1" } +
+                        " · 文件名 " + account.fileName.ifBlank { "tessera.vault" },
+                    type = SyncProviderType.S3,
+                    instanceId = account.id,
+                    active = key !in disabled,
+                    editable = true
+                )
+            )
+        }
+        // Google Drive：一个账号一行。有备注名时标题用备注、副标题写清是哪个账号
         s.googleAccounts.forEach { account ->
             val key = googleDriveBindingKey(account)
             add(
                 SyncBinding(
                     key = key,
-                    label = accountDisplayName(account),
+                    label = s.googleDriveAccountLabel(account),
                     detail = "Google Drive · " + googleAccountHint(account),
                     type = SyncProviderType.GOOGLE_DRIVE,
                     instanceId = account,
@@ -172,8 +209,8 @@ class SyncViewModel(
             add(
                 SyncBinding(
                     key = key,
-                    label = accountDisplayName(account),
-                    detail = "OneDrive · 已连接微软账号",
+                    label = s.oneDriveAccountLabel(account),
+                    detail = "OneDrive · " + accountDisplayName(account),
                     type = SyncProviderType.ONEDRIVE,
                     instanceId = account,
                     active = key !in disabled
@@ -185,7 +222,12 @@ class SyncViewModel(
             add(
                 SyncBinding(
                     key = type.name,
-                    label = type.label,
+                    label = when (type) {
+                        SyncProviderType.GITHUB -> s.githubDisplayLabel
+                        SyncProviderType.GIST -> s.gistDisplayLabel
+                        SyncProviderType.GITEE -> s.giteeDisplayLabel
+                        else -> type.label
+                    },
                     detail = bindingDetail(s, type),
                     type = type,
                     active = type.name !in disabled,
@@ -215,11 +257,14 @@ class SyncViewModel(
         s.webdavServers.forEach {
             add(CloudTarget(webdavBindingKey(it.id), "WebDAV（" + it.displayLabel + "）", SyncProviderType.WEBDAV, it.id))
         }
+        s.s3Accounts.forEach {
+            add(CloudTarget(s3BindingKey(it.id), "S3（" + it.displayLabel + "）", SyncProviderType.S3, it.id))
+        }
         s.googleAccounts.forEach {
             add(
                 CloudTarget(
                     googleDriveBindingKey(it),
-                    "Google Drive（" + accountDisplayName(it) + "）",
+                    "Google Drive（" + s.googleDriveAccountLabel(it) + "）",
                     SyncProviderType.GOOGLE_DRIVE,
                     it
                 )
@@ -229,18 +274,18 @@ class SyncViewModel(
             add(
                 CloudTarget(
                     oneDriveBindingKey(it),
-                    "OneDrive（" + accountDisplayName(it) + "）",
+                    "OneDrive（" + s.oneDriveAccountLabel(it) + "）",
                     SyncProviderType.ONEDRIVE,
                     it
                 )
             )
         }
-        if (s.gistToken.isNotBlank() && s.gistId.isNotBlank()) add(CloudTarget("GIST", "GitHub Gist", SyncProviderType.GIST))
+        if (s.gistToken.isNotBlank() && s.gistId.isNotBlank()) add(CloudTarget("GIST", s.gistDisplayLabel, SyncProviderType.GIST))
         if (SyncProviderFactory.hasCredentials(s, SyncProviderType.GITHUB)) {
-            add(CloudTarget("GITHUB", "GitHub 仓库", SyncProviderType.GITHUB))
+            add(CloudTarget("GITHUB", s.githubDisplayLabel, SyncProviderType.GITHUB))
         }
         if (SyncProviderFactory.hasCredentials(s, SyncProviderType.GITEE)) {
-            add(CloudTarget("GITEE", "Gitee", SyncProviderType.GITEE))
+            add(CloudTarget("GITEE", s.giteeDisplayLabel, SyncProviderType.GITEE))
         }
     }
 
@@ -303,18 +348,31 @@ class SyncViewModel(
             when (binding.type) {
                 SyncProviderType.WEBDAV ->
                     settings.setWebDavServers(current.webdavServers.filterNot { it.id == binding.instanceId })
-                SyncProviderType.GOOGLE_DRIVE ->
-                    settings.setGoogleAccounts(current.googleAccounts - binding.instanceId.orEmpty())
-                SyncProviderType.ONEDRIVE ->
-                    OneDriveAuth.signOut(appContext, binding.instanceId.orEmpty())
+                SyncProviderType.S3 ->
+                    settings.setS3Accounts(current.s3Accounts.filterNot { it.id == binding.instanceId })
+                SyncProviderType.GOOGLE_DRIVE -> {
+                    val account = binding.instanceId.orEmpty()
+                    settings.setGoogleAccounts(current.googleAccounts - account)
+                    settings.setGoogleAccountLabels(current.googleAccountLabels - account)
+                }
+                SyncProviderType.ONEDRIVE -> {
+                    val account = binding.instanceId.orEmpty()
+                    OneDriveAuth.signOut(appContext, account)
+                    settings.setOneDriveAccountLabels(current.oneDriveAccountLabels - account)
+                }
                 SyncProviderType.GITHUB -> {
                     settings.setGitHub("", "tessera.vault")
                     settings.setGitHubToken("")
+                    settings.setGitHubLabel("")
                 }
-                SyncProviderType.GITEE -> settings.setGitee("", "tessera.vault", "")
+                SyncProviderType.GITEE -> {
+                    settings.setGitee("", "tessera.vault", "")
+                    settings.setGiteeLabel("")
+                }
                 SyncProviderType.GIST -> {
                     settings.setGistToken("")
                     settings.setGistId("")
+                    settings.setGistLabel("")
                 }
                 SyncProviderType.NONE -> Unit
             }
@@ -416,11 +474,61 @@ class SyncViewModel(
         }
     }
 
-    fun setGitHub(ownerRepo: String, token: String, path: String) {
-        _state.value = _state.value.copy(githubOwnerRepo = ownerRepo, githubToken = token, githubPath = path)
+    /**
+     * 新增/编辑一个 S3 对象存储并**实际测一次连通性**（对话框按钮是「保存并连接」）。
+     *
+     * 与 WebDAV 同一套做法：用 pull() 探测，云端还没有备份时收到 404 也算连通，
+     * 只有网络、签名或鉴权失败才算失败——用户填错端点/区域/密钥时能立刻看到原因。
+     */
+    fun saveS3Account(account: S3Account) {
+        viewModelScope.launch {
+            val current = settings.settings.first()
+            val target = if (account.id.isBlank()) account.copy(id = UUID.randomUUID().toString()) else account
+            val next = current.s3Accounts.toMutableList()
+            val index = next.indexOfFirst { it.id == target.id }
+            if (index >= 0) next[index] = target else next += target
+            settings.setS3Accounts(next)
+            // 刚添加/编辑过的配置默认参与同步
+            settings.setDisabledProviders(current.disabledProviders - s3BindingKey(target.id))
+            refreshBindings()
+            if (target.endpoint.isBlank() || target.bucket.isBlank()) {
+                _state.value = _state.value.copy(
+                    message = "已保存「" + target.displayLabel + "」，但 Endpoint 或 Bucket 为空，暂不参与同步"
+                )
+                return@launch
+            }
+            _state.value = _state.value.copy(message = "正在测试 S3 连接…")
+            val result = try {
+                // 必须在 IO 线程调用：provider 里只有 execute() 自己切了 IO，读响应体仍在调用方线程
+                withContext(Dispatchers.IO) {
+                    S3Provider(
+                        endpoint = target.endpoint,
+                        region = target.region,
+                        bucket = target.bucket,
+                        accessKey = target.accessKey,
+                        secretKey = target.secretKey,
+                        sessionToken = target.sessionToken,
+                        prefix = target.prefix,
+                        fileName = target.fileName.ifBlank { "tessera.vault" },
+                        forcePathStyle = target.forcePathStyle
+                    ).pull()
+                }
+                "「" + target.displayLabel + "」连接成功"
+            } catch (t: Throwable) {
+                "「" + target.displayLabel + "」连接失败：" + (t.message ?: t::class.java.simpleName)
+            }
+            _state.value = _state.value.copy(message = result)
+        }
+    }
+
+    fun setGitHub(ownerRepo: String, token: String, path: String, label: String) {
+        _state.value = _state.value.copy(
+            githubOwnerRepo = ownerRepo, githubToken = token, githubPath = path, githubLabel = label
+        )
         viewModelScope.launch {
             settings.setGitHub(ownerRepo, path)
             settings.setGitHubToken(token)
+            settings.setGitHubLabel(label)
             enableBinding(SyncProviderType.GITHUB.name)
             refreshBindings()
         }
@@ -443,21 +551,54 @@ class SyncViewModel(
         }
     }
 
-    fun setGitee(ownerRepo: String, path: String, token: String) {
-        _state.value = _state.value.copy(giteeOwnerRepo = ownerRepo, giteePath = path, giteeToken = token)
+    fun setGitee(ownerRepo: String, path: String, token: String, label: String) {
+        _state.value = _state.value.copy(
+            giteeOwnerRepo = ownerRepo, giteePath = path, giteeToken = token, giteeLabel = label
+        )
         viewModelScope.launch {
             settings.setGitee(ownerRepo, path, token)
+            settings.setGiteeLabel(label)
             enableBinding(SyncProviderType.GITEE.name)
             refreshBindings()
         }
     }
 
-    fun setGist(token: String) {
-        _state.value = _state.value.copy(gistToken = token)
+    fun setGist(token: String, label: String) {
+        _state.value = _state.value.copy(gistToken = token, gistLabel = label)
         viewModelScope.launch {
             settings.setGistToken(token)
+            settings.setGistLabel(label)
             enableBinding(SyncProviderType.GIST.name)
             refreshBindings()
+        }
+    }
+
+    /**
+     * 保存某个账号的备注名（Google Drive / OneDrive）。空串表示清除备注、回落到账号名。
+     * 账号是否已绑定的判定来自账号清单，这里只动说明用的映射。
+     */
+    fun setAccountLabel(type: SyncProviderType, accountId: String, label: String) {
+        if (accountId.isBlank()) return
+        val trimmed = label.trim()
+        viewModelScope.launch {
+            val current = settings.settings.first()
+            when (type) {
+                SyncProviderType.GOOGLE_DRIVE -> {
+                    val next = current.googleAccountLabels.toMutableMap()
+                    if (trimmed.isEmpty()) next -= accountId else next[accountId] = trimmed
+                    settings.setGoogleAccountLabels(next)
+                }
+                SyncProviderType.ONEDRIVE -> {
+                    val next = current.oneDriveAccountLabels.toMutableMap()
+                    if (trimmed.isEmpty()) next -= accountId else next[accountId] = trimmed
+                    settings.setOneDriveAccountLabels(next)
+                }
+                else -> return@launch
+            }
+            refreshBindings()
+            _state.value = _state.value.copy(
+                message = if (trimmed.isEmpty()) "已清除备注名" else "备注名已保存：「" + trimmed + "」"
+            )
         }
     }
 
@@ -476,6 +617,7 @@ class SyncViewModel(
         _state.value = _state.value.copy(
             oneDriveConnected = oneDrive.isNotEmpty(),
             webdavServers = s.webdavServers,
+            s3Accounts = s.s3Accounts,
             githubOwnerRepo = s.githubOwnerRepo,
             githubPath = s.githubPath,
             githubToken = s.githubToken,
@@ -484,6 +626,11 @@ class SyncViewModel(
             giteeOwnerRepo = s.giteeOwnerRepo,
             giteePath = s.giteePath,
             giteeToken = s.giteeToken,
+            githubLabel = s.githubLabel,
+            gistLabel = s.gistLabel,
+            giteeLabel = s.giteeLabel,
+            googleAccountLabels = s.googleAccountLabels,
+            oneDriveAccountLabels = s.oneDriveAccountLabels,
             bindings = bindingsOf(s, oneDrive),
             configuredTargets = configuredTargets(s, oneDrive)
         )

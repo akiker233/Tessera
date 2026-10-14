@@ -145,10 +145,9 @@ class GistProvider(
     private val token: String,
     private val gistId: String?,
     private val fileName: String = "tessera.vault",
-    private val onGistCreated: (String) -> Unit = {}
+    private val onGistCreated: (String) -> Unit = {},
+    override val displayName: String = "GitHub Gist"
 ) : SyncProvider {
-
-    override val displayName = "GitHub Gist"
 
     override suspend fun pull(): RemoteFile? {
         val id = gistId ?: return null
@@ -290,10 +289,9 @@ class GitHubRepoProvider(
     private val owner: String,
     private val repo: String,
     private val path: String = "tessera.vault",
-    private val branch: String = "main"
+    private val branch: String = "main",
+    override val displayName: String = "GitHub 仓库"
 ) : SyncProvider {
-
-    override val displayName = "GitHub 仓库"
 
     private fun apiUrl(): String =
         "https://api.github.com/repos/" + owner + "/" + repo + "/contents/" + path

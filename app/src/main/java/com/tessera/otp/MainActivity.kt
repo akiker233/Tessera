@@ -81,11 +81,13 @@ import com.tessera.otp.feature.importer.decodeQrFromImage
 import com.tessera.otp.feature.importer.scanErrorMessage
 import com.tessera.otp.feature.importer.ImportScreen
 import com.tessera.otp.feature.sync.SyncScreen
+import com.tessera.otp.feature.sync.SyncBackendsScreen
 import com.tessera.otp.sync.GoogleDriveAuth
 import com.tessera.otp.sync.OneDriveAuth
 import com.tessera.otp.feature.settings.SettingsActions
 import com.tessera.otp.feature.settings.SettingsScreen
 import com.tessera.otp.feature.settings.SettingsSubRoute
+import com.tessera.otp.feature.settings.AboutScreen
 import com.tessera.otp.feature.settings.CategoryManageScreen
 import com.tessera.otp.feature.settings.CategoryAssignScreen
 import com.tessera.otp.feature.sync.SyncUiState
@@ -409,6 +411,7 @@ private fun AppShell(
         onListDensity = model::setListDensity,
         onOpenExport = { model.navigate(Screen.Export) },
         onOpenCategories = { model.navigate(Screen.Categories) },
+        onOpenAbout = { model.navigate(Screen.About) },
         onSyncNetworkTime = model::syncNetworkTime
     )
 
@@ -486,6 +489,8 @@ private fun AppShell(
                         onBack = model::back
                     )
                 }
+
+                is Screen.About -> AboutScreen(onBack = model::back)
 
                 is Screen.IconPicker -> IconPickerScreen(
                     icons = container.icons,
@@ -605,6 +610,17 @@ private fun AppShell(
                         onGoogleSignIn = onGoogleSignIn
                     )
                 }
+
+                is Screen.SyncBackends -> {
+                    val syncState by model.sync.state.collectAsStateWithLifecycle()
+                    SyncBackendsRoute(
+                        state = syncState,
+                        model = model,
+                        onBack = model::back,
+                        onOneDriveSignIn = onOneDriveSignIn,
+                        onGoogleSignIn = onGoogleSignIn
+                    )
+                }
             }
         }
     }
@@ -698,21 +714,55 @@ private fun SyncRoute(
                 state = state,
                 onPassphraseChange = model.sync::updatePassphraseInput,
                 onSavePassphrase = model.sync::savePassphrase,
-                onSaveWebDavServer = model.sync::saveWebDavServer,
-                onGitHub = model.sync::setGitHub,
-                onGist = model.sync::setGist,
-                onGitee = model.sync::setGitee,
                 onInterval = { interval ->
                     model.sync.setInterval(interval)
                     model.scheduleSync(interval)
                 },
-                onGoogleSignIn = onGoogleSignIn,
-                onOneDriveSignIn = onOneDriveSignIn,
-                onRemoveBinding = model.sync::removeBinding,
-                onToggleBinding = model.sync::setBindingActive,
-                onDeleteCloud = model.sync::deleteCloud,
+                onOpenBackends = { model.navigate(Screen.SyncBackends) },
                 onSyncNow = model.sync::runManualSync,
                 onSyncEnabled = model.sync::setSyncEnabled
+            )
+        }
+    }
+}
+
+/** 云同步二级页：后端绑定与云端数据管理。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SyncBackendsRoute(
+    state: SyncUiState,
+    model: MainViewModel,
+    onBack: () -> Unit,
+    onOneDriveSignIn: () -> Unit,
+    onGoogleSignIn: () -> Unit
+) {
+    BackHandler(onBack = onBack)
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("同步后端") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        androidx.compose.foundation.layout.Box(Modifier.padding(padding)) {
+            SyncBackendsScreen(
+                state = state,
+                onSaveWebDavServer = model.sync::saveWebDavServer,
+                onSaveS3Account = model.sync::saveS3Account,
+                onGitHub = model.sync::setGitHub,
+                onGist = model.sync::setGist,
+                onGitee = model.sync::setGitee,
+                onGoogleSignIn = onGoogleSignIn,
+                onOneDriveSignIn = onOneDriveSignIn,
+                onSetAccountLabel = model.sync::setAccountLabel,
+                onRemoveBinding = model.sync::removeBinding,
+                onToggleBinding = model.sync::setBindingActive,
+                onDeleteCloud = model.sync::deleteCloud
             )
         }
     }

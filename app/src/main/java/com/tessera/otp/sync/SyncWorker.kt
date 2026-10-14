@@ -13,10 +13,15 @@ import com.tessera.otp.data.prefs.AppSettings
 import com.tessera.otp.data.prefs.SINGLETON_PROVIDER_ORDER
 import com.tessera.otp.data.prefs.SyncInterval
 import com.tessera.otp.data.prefs.SyncProviderType
-import com.tessera.otp.data.prefs.accountDisplayName
 import com.tessera.otp.data.prefs.displayLabel
+import com.tessera.otp.data.prefs.gistDisplayLabel
+import com.tessera.otp.data.prefs.giteeDisplayLabel
+import com.tessera.otp.data.prefs.githubDisplayLabel
+import com.tessera.otp.data.prefs.googleDriveAccountLabel
 import com.tessera.otp.data.prefs.googleDriveBindingKey
+import com.tessera.otp.data.prefs.oneDriveAccountLabel
 import com.tessera.otp.data.prefs.oneDriveBindingKey
+import com.tessera.otp.data.prefs.s3BindingKey
 import com.tessera.otp.data.prefs.webdavBindingKey
 import com.tessera.otp.di.AppContainer
 import kotlinx.coroutines.flow.first
@@ -26,7 +31,7 @@ import java.util.concurrent.TimeUnit
  * 一个参与同步的后端实例。
  *
  * 单实例后端（GitHub / Gist / Gitee）每种只有一条、不带 [instanceId]；
- * 多实例后端（WebDAV / Google Drive / OneDrive）用 [instanceId] 区分具体服务器或账号。
+ * 多实例后端（WebDAV / S3 / Google Drive / OneDrive）用 [instanceId] 区分具体服务器或账号。
  */
 data class SyncTarget(
     val type: SyncProviderType,
@@ -39,6 +44,7 @@ object SyncProviderFactory {
     /** 这个后端实例在「停用集合」里的键：多实例带 `<类型>:<实例 id>`，其余每种一个枚举名。 */
     fun bindingKey(type: SyncProviderType, instanceId: String? = null): String = when (type) {
         SyncProviderType.WEBDAV -> webdavBindingKey(instanceId.orEmpty())
+        SyncProviderType.S3 -> s3BindingKey(instanceId.orEmpty())
         SyncProviderType.GOOGLE_DRIVE -> googleDriveBindingKey(instanceId.orEmpty())
         SyncProviderType.ONEDRIVE -> oneDriveBindingKey(instanceId.orEmpty())
         else -> type.name
@@ -63,6 +69,7 @@ object SyncProviderFactory {
     fun boundTargets(settings: AppSettings, oneDriveAccountIds: List<String>): List<SyncTarget> {
         val result = mutableListOf<SyncTarget>()
         settings.webdavServers.forEach { result += SyncTarget(SyncProviderType.WEBDAV, it.id) }
+        settings.s3Accounts.forEach { result += SyncTarget(SyncProviderType.S3, it.id) }
         settings.googleAccounts.forEach { result += SyncTarget(SyncProviderType.GOOGLE_DRIVE, it) }
         oneDriveAccountIds.forEach { result += SyncTarget(SyncProviderType.ONEDRIVE, it) }
         SINGLETON_PROVIDER_ORDER.forEach { if (hasCredentials(settings, it)) result += SyncTarget(it) }
@@ -123,12 +130,35 @@ object SyncProviderFactory {
                     displayName = "WebDAV（" + server.displayLabel + "）"
                 )
             }
+            SyncProviderType.S3 -> {
+                val account = settings.s3Accounts.firstOrNull { it.id == target.instanceId }
+                    ?: throw SyncException("该 S3 配置已被移除")
+                if (account.endpoint.isBlank() || account.bucket.isBlank()) {
+                    throw SyncException("请先填写 S3 的 Endpoint 与 Bucket")
+                }
+                if (account.accessKey.isBlank() || account.secretKey.isBlank()) {
+                    throw SyncException("请先填写 S3 的 Access Key 与 Secret Key")
+                }
+                S3Provider(
+                    endpoint = account.endpoint,
+                    region = account.region,
+                    bucket = account.bucket,
+                    accessKey = account.accessKey,
+                    secretKey = account.secretKey,
+                    sessionToken = account.sessionToken,
+                    prefix = account.prefix,
+                    fileName = account.fileName.ifBlank { "tessera.vault" },
+                    forcePathStyle = account.forcePathStyle,
+                    displayName = "S3（" + account.displayLabel + "）"
+                )
+            }
             SyncProviderType.GIST -> {
                 if (settings.gistToken.isBlank()) throw SyncException("请先填写 GitHub 令牌")
                 GistProvider(
                     token = settings.gistToken,
                     gistId = settings.gistId.ifBlank { null },
-                    onGistCreated = onGistCreated
+                    onGistCreated = onGistCreated,
+                    displayName = settings.gistDisplayLabel
                 )
             }
             SyncProviderType.GITEE -> {
@@ -136,29 +166,35 @@ object SyncProviderFactory {
                 if (settings.giteeToken.isBlank() || parts.size != 2) {
                     throw SyncException("请填写 Gitee 令牌与 owner/repo")
                 }
-                GiteeProvider(settings.giteeToken, parts[0], parts[1], settings.giteePath)
+                GiteeProvider(
+                    settings.giteeToken, parts[0], parts[1], settings.giteePath,
+                    displayName = settings.giteeDisplayLabel
+                )
             }
             SyncProviderType.GITHUB -> {
                 val parts = settings.githubOwnerRepo.split("/")
                 if (settings.githubToken.isBlank() || parts.size != 2) {
                     throw SyncException("请填写 GitHub 令牌与 owner/repo")
                 }
-                GitHubRepoProvider(settings.githubToken, parts[0], parts[1], settings.githubPath)
+                GitHubRepoProvider(
+                    settings.githubToken, parts[0], parts[1], settings.githubPath,
+                    displayName = settings.githubDisplayLabel
+                )
             }
             SyncProviderType.GOOGLE_DRIVE -> {
                 val account = target.instanceId.orEmpty()
                 GoogleDriveProvider(
                     context = context,
                     tokenProvider = { GoogleDriveAuth.accessToken(context, account) },
-                    displayName = "Google Drive（" + accountDisplayName(account) + "）"
+                    displayName = "Google Drive（" + settings.googleDriveAccountLabel(account) + "）"
                 )
             }
             SyncProviderType.ONEDRIVE -> {
                 val account = target.instanceId.orEmpty()
                 // 令牌由 OneDriveAuth 管理（自动续期）；未登录时给出明确提示
                 val token = OneDriveAuth.accessToken(context, account)
-                    ?: throw SyncException("尚未连接 OneDrive（" + accountDisplayName(account) + "）：请先在「云同步」里登录微软账号")
-                OneDriveProvider(token, displayName = "OneDrive（" + accountDisplayName(account) + "）")
+                    ?: throw SyncException("尚未连接 OneDrive（" + settings.oneDriveAccountLabel(account) + "）：请先在「云同步」里登录微软账号")
+                OneDriveProvider(token, displayName = "OneDrive（" + settings.oneDriveAccountLabel(account) + "）")
             }
             SyncProviderType.NONE -> throw SyncException("尚未选择同步方式")
         }
@@ -167,9 +203,16 @@ object SyncProviderFactory {
     private fun SyncTarget.label(settings: AppSettings): String = when (type) {
         SyncProviderType.WEBDAV ->
             "WebDAV（" + (settings.webdavServers.firstOrNull { it.id == instanceId }?.displayLabel ?: "已移除") + "）"
-        SyncProviderType.GOOGLE_DRIVE, SyncProviderType.ONEDRIVE ->
-            type.label + "（" + accountDisplayName(instanceId.orEmpty()) + "）"
-        else -> type.label
+        SyncProviderType.S3 ->
+            "S3（" + (settings.s3Accounts.firstOrNull { it.id == instanceId }?.displayLabel ?: "已移除") + "）"
+        SyncProviderType.GOOGLE_DRIVE ->
+            "Google Drive（" + settings.googleDriveAccountLabel(instanceId.orEmpty()) + "）"
+        SyncProviderType.ONEDRIVE ->
+            "OneDrive（" + settings.oneDriveAccountLabel(instanceId.orEmpty()) + "）"
+        SyncProviderType.GITHUB -> settings.githubDisplayLabel
+        SyncProviderType.GIST -> settings.gistDisplayLabel
+        SyncProviderType.GITEE -> settings.giteeDisplayLabel
+        SyncProviderType.NONE -> type.label
     }
 }
 

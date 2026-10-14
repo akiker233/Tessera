@@ -17,10 +17,9 @@ class GiteeProvider(
     private val owner: String,
     private val repo: String,
     private val path: String = "tessera.vault",
-    private val branch: String = "master"
+    private val branch: String = "master",
+    override val displayName: String = "Gitee"
 ) : SyncProvider {
-
-    override val displayName = "Gitee"
 
     private fun apiUrl(): String =
         "https://gitee.com/api/v5/repos/" + owner + "/" + repo + "/contents/" + path
