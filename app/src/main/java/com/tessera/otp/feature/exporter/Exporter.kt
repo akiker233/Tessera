@@ -1,9 +1,12 @@
 package com.tessera.otp.feature.exporter
 
+import com.tessera.otp.data.db.entity.CategoryEntity
 import com.tessera.otp.data.repo.Account
 import com.tessera.otp.domain.Base32
+import com.tessera.otp.sync.SyncCodec
 
 enum class ExportFormat(val label: String, val fileName: String, val mimeType: String) {
+    TESSERA("Tessera 备份（含分类，可设密码加密）", "tessera-backup.tessera", "application/json"),
     JSON("JSON（含账户与密钥，可回导）", "tessera-export.json", "application/json"),
     OTPAUTH("otpauth:// 文本（每行一条）", "tessera-export.txt", "text/plain"),
     CSV("CSV（issuer,account,secret,...）", "tessera-export.csv", "text/csv")
@@ -17,10 +20,34 @@ enum class ExportFormat(val label: String, val fileName: String, val mimeType: S
  */
 object Exporter {
 
-    fun build(accounts: List<Account>, format: ExportFormat): String = when (format) {
+    fun build(
+        accounts: List<Account>,
+        format: ExportFormat,
+        categories: List<CategoryEntity> = emptyList(),
+        passphrase: String? = null
+    ): String = when (format) {
+        ExportFormat.TESSERA -> buildTessera(accounts, categories, passphrase)
         ExportFormat.JSON -> buildJson(accounts)
         ExportFormat.OTPAUTH -> accounts.joinToString("\n") { otpAuthUri(it) }
         ExportFormat.CSV -> buildCsv(accounts)
+    }
+
+    /**
+     * Tessera 专属备份：账号 + 分类（含分类归属）。
+     *
+     * 复用同步包的快照结构与信封：不设密码时输出可读明文 JSON；设了密码则用该密码派生
+     * AES-256-GCM 加密整包（与云同步同一套、已被单测覆盖的编解码）。
+     */
+    fun buildTessera(accounts: List<Account>, categories: List<CategoryEntity>, passphrase: String?): String {
+        val snapshot = SyncCodec.toSnapshot(
+            entries = accounts.map { it.entity to it.secret },
+            categories = categories.filter { !it.isDeleted }
+        )
+        return if (passphrase.isNullOrBlank()) {
+            SyncCodec.encodePlain(snapshot)
+        } else {
+            SyncCodec.encode(snapshot, passphrase)
+        }
     }
 
     fun secretOf(account: Account): String = Base32.encode(account.secret)

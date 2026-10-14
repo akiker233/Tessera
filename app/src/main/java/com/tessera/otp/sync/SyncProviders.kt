@@ -22,6 +22,9 @@ interface SyncProvider {
 
     /** 写入云端同步包；expectedEtag 非空时要求服务端版本未变化（不支持的服务忽略）。 */
     suspend fun push(content: String, expectedEtag: String?): Boolean
+
+    /** 删除云端同步包（只删远端，不影响本机数据）；云端本就不存在时同样成功（幂等）。 */
+    suspend fun delete(): Boolean
 }
 
 class SyncException(message: String, val code: Int? = null) : Exception(message)
@@ -37,7 +40,13 @@ internal object Http {
     val jsonType = "application/json; charset=utf-8".toMediaType()
 
     suspend fun execute(request: Request): Response = withContext(Dispatchers.IO) {
-        Http.client.newCall(request).execute()
+        try {
+            Http.client.newCall(request).execute()
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            throw SyncException(describe(t))
+        }
     }
 
     /** 把 HTTP 状态码翻译成用户能看懂的错误。 */
@@ -49,6 +58,23 @@ internal object Http {
         429 -> "请求过于频繁（429）：请稍后重试"
         in 500..599 -> "远端服务异常（" + response.code + "）"
         else -> "HTTP " + response.code + " " + response.message
+    }
+
+    /**
+     * 把底层网络异常翻译成用户能看懂的错误。
+     *
+     * 直接在 UI 上抛出 `Trust anchor for certification path not found` 之类的 Java 原始信息
+     * 用户无法行动，这里统一换成可操作的提示（自建 WebDAV 常见的就是证书与明文两类问题）。
+     */
+    fun describe(t: Throwable): String = when (t) {
+        is SyncException -> t.message ?: "同步失败"
+        is javax.net.ssl.SSLPeerUnverifiedException,
+        is javax.net.ssl.SSLHandshakeException ->
+            "TLS 证书校验失败：请在系统设置里安装该服务器的证书，或改用 http 地址"
+        is java.net.UnknownHostException -> "无法解析主机名：" + (t.message ?: "请检查地址")
+        is java.net.ConnectException -> "无法连接服务器：" + (t.message ?: "连接被拒绝")
+        is java.net.SocketTimeoutException -> "连接超时：请检查地址与网络"
+        else -> t.message ?: t::class.java.simpleName
     }
 }
 
@@ -94,6 +120,15 @@ class WebDavProvider(
         if (expectedEtag != null) request.header("If-Match", expectedEtag)
         val response = Http.execute(request.put(content.toRequestBody(Http.jsonType)).build())
         response.use {
+            if (!it.isSuccessful) throw SyncException(Http.describe(it), it.code)
+            return true
+        }
+    }
+
+    override suspend fun delete(): Boolean {
+        val response = Http.execute(builder().url(fileUrl()).delete().build())
+        response.use {
+            if (it.code == 404) return true
             if (!it.isSuccessful) throw SyncException(Http.describe(it), it.code)
             return true
         }
@@ -156,6 +191,23 @@ class GistProvider(
                 val newId = extractGistId(it.body?.string().orEmpty())
                 if (newId != null) onGistCreated(newId)
             }
+            return true
+        }
+    }
+
+    override suspend fun delete(): Boolean {
+        // 尚未创建过 Gist（无 gistId）时云端本就没有数据，直接视为成功
+        val id = gistId ?: return true
+        val request = Request.Builder()
+            .url("https://api.github.com/gists/" + id)
+            .header("Accept", "application/vnd.github+json")
+            .header("Authorization", "Bearer " + token)
+            .delete()
+            .build()
+        val response = Http.execute(request)
+        response.use {
+            if (it.code == 404) return true
+            if (!it.isSuccessful) throw SyncException(Http.describe(it), it.code)
             return true
         }
     }
@@ -282,6 +334,24 @@ class GitHubRepoProvider(
         }
         val response = Http.execute(request().url(apiUrl()).put(body.toRequestBody(Http.jsonType)).build())
         response.use {
+            if (!it.isSuccessful) throw SyncException(Http.describe(it), it.code)
+            return true
+        }
+    }
+
+    override suspend fun delete(): Boolean {
+        // Contents API 删除必须带当前 sha：先 GET 一次；文件不存在时 pull 返回 null → 幂等成功
+        val sha = pull()?.etag ?: return true
+        val body = buildString {
+            append("{\"message\":\"delete tessera vault\",\"branch\":")
+            append(quote(branch))
+            append(",\"sha\":")
+            append(quote(sha))
+            append("}")
+        }
+        val response = Http.execute(request().url(apiUrl()).delete(body.toRequestBody(Http.jsonType)).build())
+        response.use {
+            if (it.code == 404) return true
             if (!it.isSuccessful) throw SyncException(Http.describe(it), it.code)
             return true
         }

@@ -8,7 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 同步包可移植格式（v2）测试。
+ * 同步包可移植格式（v2/v3）测试。
  *
  * 这一组用例守的是「换机能不能恢复」以及「旧格式毒条目会不会被写进库」：
  * v1 包里是别的设备 Keystore 的密文，本机解不开时必须丢弃，而不是让它落库后每次读取都崩。
@@ -40,7 +40,7 @@ class SyncPortableTest {
         val snapshot = VaultSnapshot(version = 1, entries = listOf(entry("a", "ciphertext")))
         val (out, skipped) = snapshot.toPortable { if (it == "ciphertext") secret else null }
         assertEquals(0, skipped)
-        assertEquals(2, out.version)
+        assertEquals(SyncCodec.CURRENT_VERSION, out.version)
         assertEquals(Base32.encode(secret), out.entries.single().secretBase32)
     }
 
@@ -75,7 +75,7 @@ class SyncPortableTest {
         val entity = AccountEntity(id = "a", issuer = "issuer", accountName = "acct")
         val payload = SyncCodec.encode(SyncCodec.toSnapshot(listOf(entity to secret), now = 123L), "horse-battery")
         val snapshot = SyncCodec.decode(payload, "horse-battery")
-        assertEquals(2, snapshot.version)
+        assertEquals(SyncCodec.CURRENT_VERSION, snapshot.version)
         assertEquals(123L, snapshot.updatedAt)
         assertEquals(Base32.encode(secret), snapshot.entries.single().secretBase32)
     }

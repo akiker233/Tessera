@@ -109,6 +109,21 @@ class GoogleDriveProvider(
         else -> t.message ?: t::class.java.simpleName
     }
 
+    override suspend fun delete(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val drive = drive()
+            val id = findFileId(drive) ?: return@withContext true
+            drive.files().delete(id).execute()
+            true
+        } catch (t: GoogleJsonResponseException) {
+            // 文件在 list 与 delete 之间被删掉：视为已删除
+            if (t.details?.code == 404) return@withContext true
+            throw SyncException(describe(t))
+        } catch (t: Throwable) {
+            throw SyncException(describe(t))
+        }
+    }
+
     companion object {
         /** 仅 appdata 范围，与 2FAS 一致。 */
         const val DRIVE_APPDATA_SCOPE = "https://www.googleapis.com/auth/drive.appdata"
@@ -181,6 +196,20 @@ class OneDriveProvider(private var accessToken: String?) : SyncProvider {
         val request = builder.put(content.toRequestBody("application/octet-stream".toMediaType())).build()
         val response = Http.execute(request)
         response.use {
+            if (!it.isSuccessful) throw SyncException(Http.describe(it), it.code)
+            return true
+        }
+    }
+
+    override suspend fun delete(): Boolean {
+        val request = Request.Builder()
+            .url(itemUrl())
+            .header("Authorization", "Bearer " + requireToken())
+            .delete()
+            .build()
+        val response = Http.execute(request)
+        response.use {
+            if (it.code == 404) return true
             if (!it.isSuccessful) throw SyncException(Http.describe(it), it.code)
             return true
         }

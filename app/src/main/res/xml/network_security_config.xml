@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    云同步需要连接用户自建的 WebDAV（NAS / Nextcloud 等），这类地址无法预先枚举，
+    因此这里对「全局」放宽两点：
+      1. cleartextTrafficPermitted="true"：允许明文 HTTP，否则局域网/内网 HTTP WebDAV 会被
+         targetSdk 28+ 的默认策略直接拦截（CLEARTEXT communication not permitted）；
+      2. trust-anchors 额外加入 "user"：自签名证书只能由用户手动装进「用户证书」存储，
+         只信任 system 会导致这类 HTTPS 服务器永远握手失败。
+    注意：应用的同步包本身由用户的同步口令做 AES-256-GCM 端到端加密，放宽传输层不会泄露
+    账号密钥；但用户安装的 CA 确实可对全部后端（含 Drive/OneDrive）实施中间人，属已知取舍。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

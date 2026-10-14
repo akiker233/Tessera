@@ -81,6 +81,9 @@ class SyncEngine(
             // 本地导出时必须带上明文密钥：云端包要能在别的设备上恢复
             val localPairs = repository.entitiesWithSecrets()
             var mergedEntries = SyncCodec.toSnapshot(localPairs).entries
+            var mergedCategories = repository.categoriesWithDeleted().map { VaultCategory.from(it) }
+            // 同名分类合并后，失败方条目的引用要改指向保留方
+            val categoryRemap = HashMap<String, String>()
             val etags = HashMap<SyncProvider, String?>()
             val failed = LinkedHashMap<String, String>()
             var addedRemotely = 0
@@ -102,31 +105,49 @@ class SyncEngine(
                     etags[provider] = null
                     continue
                 }
-                val remoteEntries = try {
+                val remoteSnapshot = try {
                     // v1 包里的密钥是别的设备 Keystore 的密文：能解开就转成可移植格式，解不开就丢弃
                     val portable = SyncCodec.decode(remote.content, passphrase)
                         .toPortable { encoded -> repository.tryDecryptSecret(encoded) }
                     skippedLegacy += portable.second
-                    portable.first.entries
+                    portable.first
                 } catch (t: Throwable) {
                     failed[provider.displayName] = "解码失败（同步口令是否一致？）"
                     continue
                 }
                 remoteHadData = true
-                val outcome = Merge.merge(mergedEntries, remoteEntries)
+                val outcome = Merge.merge(mergedEntries, remoteSnapshot.entries)
                 mergedEntries = outcome.merged
                 addedRemotely += outcome.addedRemotely
                 addedLocally += outcome.addedLocally
                 remoteWins += outcome.remoteWins
                 localWins += outcome.localWins
+
+                val categoryOutcome = Merge.mergeCategories(mergedCategories, remoteSnapshot.categories)
+                mergedCategories = categoryOutcome.merged
+                categoryRemap.putAll(categoryOutcome.idRemap)
+
                 etags[provider] = remote.etag
+            }
+
+            if (categoryRemap.isNotEmpty()) {
+                mergedEntries = mergedEntries.map { entry ->
+                    val remapped = entry.categoryId?.let { categoryRemap[it] }
+                    if (remapped != null) entry.copy(categoryId = remapped) else entry
+                }
             }
 
             // 只写「本机拿得到明文密钥」的条目，由仓库用本机主密钥重新加密后落库
             val mergedPairs = mergedEntries.mapNotNull { it.toEntityAndSecret() }
-            repository.muted { repository.replaceAllWithSecrets(mergedPairs) }
+            repository.muted {
+                repository.upsertCategories(mergedCategories.map(VaultCategory::toEntity))
+                repository.replaceAllWithSecrets(mergedPairs)
+            }
 
-            val payload = SyncCodec.encode(SyncCodec.toSnapshot(mergedPairs), passphrase)
+            val payload = SyncCodec.encode(
+                SyncCodec.toSnapshot(mergedPairs, mergedCategories.map(VaultCategory::toEntity)),
+                passphrase
+            )
             for (provider in providers) {
                 if (failed.containsKey(provider.displayName)) continue
                 try {
@@ -136,11 +157,13 @@ class SyncEngine(
                 }
             }
 
+            val activeCategories = mergedCategories.count { !it.isDeleted }
+            val categoryNote = if (activeCategories > 0) "，分类 " + activeCategories + " 个" else ""
             val base = if (remoteHadData) {
-                names + " · 同步完成：" + mergedPairs.size + " 条（远端新增 " + addedRemotely +
+                names + " · 同步完成：" + mergedPairs.size + " 条" + categoryNote + "（远端新增 " + addedRemotely +
                     "，本地新增 " + addedLocally + "）"
             } else {
-                names + " · 已上传 " + mergedPairs.size + " 条（云端此前为空）"
+                names + " · 已上传 " + mergedPairs.size + " 条" + categoryNote + "（云端此前为空）"
             } + if (skippedLegacy > 0) {
                 "；跳过 " + skippedLegacy + " 条本机解不开的旧格式条目（请到有原始数据的设备上再同步一次，把包升级成可移植格式）"
             } else ""

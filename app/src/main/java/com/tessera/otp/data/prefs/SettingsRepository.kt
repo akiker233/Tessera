@@ -40,9 +40,9 @@ enum class ThemeMode(val label: String) { AUTO("自动"), LIGHT("浅色"), DARK(
 
 /** 列表布局密度（大/默认/紧凑）。 */
 enum class ListDensity(val label: String, val rowPadding: Int, val codeSize: Int, val iconSize: Int) {
-    LARGE("大", 20, 30, 46),
-    DEFAULT("默认", 14, 24, 38),
-    COMPACT("紧凑", 8, 19, 30)
+    LARGE("大", 20, 34, 46),
+    DEFAULT("默认", 14, 28, 38),
+    COMPACT("紧凑", 8, 22, 30)
 }
 
 enum class SyncProviderType(val label: String) {

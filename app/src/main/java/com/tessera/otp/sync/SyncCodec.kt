@@ -1,6 +1,7 @@
 package com.tessera.otp.sync
 
 import com.tessera.otp.data.db.entity.AccountEntity
+import com.tessera.otp.data.db.entity.CategoryEntity
 import com.tessera.otp.domain.Base32
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -14,6 +15,9 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
+
+/** 包格式标识：让导入端一眼认出这是 Tessera 专属备份/同步包（明文与加密信封都会带）。 */
+const val TESSERA_FORMAT_MARKER = "tessera"
 
 /**
  * 上传到云端的单条记录（格式 v2）。
@@ -45,10 +49,53 @@ data class VaultEntry(
 
 @Serializable
 data class VaultSnapshot(
+    /** 格式标识（见 [TESSERA_FORMAT_MARKER]）：导出/同步包都带，便于导入端识别。 */
+    @SerialName("app") val app: String = TESSERA_FORMAT_MARKER,
     @SerialName("version") val version: Int = 1,
     @SerialName("updatedAt") val updatedAt: Long = 0L,
-    @SerialName("entries") val entries: List<VaultEntry> = emptyList()
+    @SerialName("entries") val entries: List<VaultEntry> = emptyList(),
+    /** v3 起携带分类（含墓碑）。旧包缺此字段时默认为空，向后兼容。 */
+    @SerialName("categories") val categories: List<VaultCategory> = emptyList()
 )
+
+/**
+ * 上传到云端的单条分类（格式 v3）。
+ *
+ * 全量导出（不分是否删除）：墓碑要一起走，否则删除分类后别的设备下次同步会把它「复活」。
+ * 删除的分类其 name 已被改成含 id 的唯一串（见 [CategoryEntity.TOMBSTONE_PREFIX]），
+ * 避免与「同名新建分类」撞唯一索引。
+ */
+@Serializable
+data class VaultCategory(
+    @SerialName("id") val id: String,
+    @SerialName("name") val name: String = "",
+    @SerialName("color") val colorArgb: Int = 0xFF3B5BDB.toInt(),
+    @SerialName("order") val sortOrder: Int = 0,
+    @SerialName("updatedAt") val updatedAt: Long = 0L,
+    @SerialName("deletedAt") val deletedAt: Long? = null
+) {
+    val isDeleted: Boolean get() = deletedAt != null
+
+    fun toEntity(): CategoryEntity = CategoryEntity(
+        id = id,
+        name = name,
+        colorArgb = colorArgb,
+        sortOrder = sortOrder,
+        updatedAt = updatedAt,
+        deletedAt = deletedAt
+    )
+
+    companion object {
+        fun from(entity: CategoryEntity): VaultCategory = VaultCategory(
+            id = entity.id,
+            name = entity.name,
+            colorArgb = entity.colorArgb,
+            sortOrder = entity.sortOrder,
+            updatedAt = entity.updatedAt,
+            deletedAt = entity.deletedAt
+        )
+    }
+}
 
 /**
  * 同步包编解码。
@@ -62,7 +109,10 @@ data class VaultSnapshot(
  */
 object SyncCodec {
 
-    private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
+    private val json = Json { ignoreUnknownKeys = true; prettyPrint = false; encodeDefaults = true }
+
+    /** 明文备份用：带缩进，便于用户直接查看/比对。 */
+    private val plainJson = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
 
     const val ITERATIONS = 210_000
     private const val KEY_BITS = 256
@@ -70,11 +120,15 @@ object SyncCodec {
     private const val TAG_BITS = 128
     private const val SALT_BYTES = 16
 
-    /** 当前包格式：条目密钥为明文 Base32（外层已由同步口令加密）。 */
-    const val CURRENT_VERSION = 2
+    /** 当前包格式：条目密钥为明文 Base32（外层已由同步口令加密），并携带分类。 */
+    const val CURRENT_VERSION = 3
+
+    /** v2 起包内密钥即为可移植的明文 Base32；低于此版本要用本机 Keystore 密文解密器尝试转换。 */
+    internal const val PORTABLE_SINCE = 2
 
     fun toSnapshot(
         entries: List<Pair<AccountEntity, ByteArray>>,
+        categories: List<CategoryEntity> = emptyList(),
         now: Long = System.currentTimeMillis()
     ): VaultSnapshot =
         VaultSnapshot(
@@ -100,7 +154,8 @@ object SyncCodec {
                     deletedAt = entity.deletedAt,
                     syncRev = entity.syncRev
                 )
-            }
+            },
+            categories = categories.map { VaultCategory.from(it) }
         )
 
     /**
@@ -118,7 +173,9 @@ object SyncCodec {
         val iv = cipher.iv
         val ct = cipher.doFinal(plain)
         val payload = buildString {
-            append("{\"v\":1,\"kdf\":\"pbkdf2-sha256\",\"iter\":")
+            append("{\"app\":\"")
+            append(TESSERA_FORMAT_MARKER)
+            append("\",\"v\":1,\"kdf\":\"pbkdf2-sha256\",\"iter\":")
             append(ITERATIONS)
             append(",\"salt\":\"")
             append(java.util.Base64.getEncoder().encodeToString(salt))
@@ -146,6 +203,14 @@ object SyncCodec {
         return json.decodeFromString(VaultSnapshot.serializer(), String(plain, Charsets.UTF_8))
     }
 
+    /** 未加密的明文备份 JSON（带缩进，Tessera 导出格式）。 */
+    fun encodePlain(snapshot: VaultSnapshot): String =
+        plainJson.encodeToString(VaultSnapshot.serializer(), snapshot)
+
+    /** 解析未加密的明文备份 JSON。 */
+    fun decodePlain(payload: String): VaultSnapshot =
+        json.decodeFromString(VaultSnapshot.serializer(), payload.trim())
+
     private fun kotlinx.serialization.json.JsonObject.string(key: String): String =
         this[key]?.jsonPrimitive?.contentOrNull ?: throw IllegalArgumentException("缺少字段：" + key)
 
@@ -157,17 +222,20 @@ object SyncCodec {
 }
 
 /**
- * 把云端包统一成**可移植格式**（v2）。
+ * 把云端包统一成**可移植格式**（v2+）。
  *
  * v1 包里的 "secret" 是「生成备份那台设备的 Keystore 密文」，只有那台设备解不开才怪；
  * 换机/重装（Keystore 条目随之丢失）后本机**永远**解不开，旧版本正是这样把毒条目写进库，
  * 导致首页每次读取都解密失败、应用一打开就崩且无法自救。
  *
+ * 注意阈值是 v2（而非 CURRENT_VERSION）：v2 包的密钥已是明文 Base32，直接可用，
+ * 只是没有分类字段。若按 v3 判断就会把 v2 的明文密钥当密文再解一次，全被丢弃。
+ *
  * @param decryptLegacy 旧格式密文的解密器，本机解不开时返回 null
  * @return 归一化后的包 to 被丢弃的条目数（丢弃的都是本机永远解不开的）
  */
 fun VaultSnapshot.toPortable(decryptLegacy: (String) -> ByteArray?): Pair<VaultSnapshot, Int> {
-    if (version >= SyncCodec.CURRENT_VERSION) return this to 0
+    if (version >= SyncCodec.PORTABLE_SINCE) return this to 0
     var skipped = 0
     val converted = entries.mapNotNull { entry ->
         val secret = decryptLegacy(entry.secretBase32)
@@ -178,7 +246,12 @@ fun VaultSnapshot.toPortable(decryptLegacy: (String) -> ByteArray?): Pair<VaultS
             entry.copy(secretBase32 = Base32.encode(secret))
         }
     }
-    return VaultSnapshot(version = SyncCodec.CURRENT_VERSION, updatedAt = updatedAt, entries = converted) to skipped
+    return VaultSnapshot(
+        version = SyncCodec.CURRENT_VERSION,
+        updatedAt = updatedAt,
+        entries = converted,
+        categories = categories
+    ) to skipped
 }
 
 /**

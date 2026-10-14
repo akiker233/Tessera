@@ -15,12 +15,14 @@ import com.tessera.otp.sync.SyncEngine
 import com.tessera.otp.sync.SyncOutcome
 import com.tessera.otp.sync.SyncPassphraseStore
 import com.tessera.otp.sync.SyncProviderFactory
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class SyncUiState(
     val provider: SyncProviderType = SyncProviderType.NONE,
@@ -40,6 +42,8 @@ data class SyncUiState(
     val oneDriveConnected: Boolean = false,
     /** 参与「同时同步」的后端名称集合。 */
     val enabledProviders: Set<String> = emptySet(),
+    /** 已配置（有可用凭据）的后端：可在「云端数据」里删除其远端备份。 */
+    val configuredProviders: List<SyncProviderType> = emptyList(),
     val interval: SyncInterval = SyncInterval.OFF,
     /** 同步总开关：关闭后自动同步（冷启动 / 账号变更 / 后台周期）全部停用，手动同步不受影响。 */
     val syncEnabled: Boolean = true,
@@ -89,7 +93,53 @@ class SyncViewModel(
                 lastStatus = current.lastSyncStatus,
                 lastSyncAt = current.lastSyncAt,
                 googleAccount = current.googleAccount,
-                enabledProviders = current.enabledProviders
+                enabledProviders = current.enabledProviders,
+                configuredProviders = configuredTypes(current)
+            )
+        }
+    }
+
+    /**
+     * 判定哪些后端「已配置」——只有配好凭据的后端才可能云端有数据、才需要在「云端数据」里列出。
+     * Gist 额外要求已有 gistId（没有 Gist 就没有远端数据可删）。
+     */
+    private fun configuredTypes(s: AppSettings): List<SyncProviderType> = buildList {
+        if (s.webdavUrl.isNotBlank()) add(SyncProviderType.WEBDAV)
+        if (s.gistToken.isNotBlank() && s.gistId.isNotBlank()) add(SyncProviderType.GIST)
+        if (s.githubToken.isNotBlank() && s.githubOwnerRepo.count { it == '/' } == 1) add(SyncProviderType.GITHUB)
+        if (s.giteeToken.isNotBlank() && s.giteeOwnerRepo.count { it == '/' } == 1) add(SyncProviderType.GITEE)
+        if (s.googleAccount.isNotBlank()) add(SyncProviderType.GOOGLE_DRIVE)
+        if (OneDriveAuth.isConnected(appContext)) add(SyncProviderType.ONEDRIVE)
+    }
+
+    /**
+     * 删除某个后端在云端保存的备份文件（只删远端，本机账号/分类一律不动）。
+     *
+     * 删除动作不走同步引擎：直接构造该后端并调用 delete()。Gist 是整份删除，
+     * 删成功后清掉本地记录的 gistId，否则下次同步会 PATCH 到一个已不存在的 Gist。
+     */
+    fun deleteCloud(type: SyncProviderType) {
+        viewModelScope.launch {
+            val current = settings.settings.first()
+            val provider = try {
+                SyncProviderFactory.createFor(appContext, current, type)
+            } catch (t: Throwable) {
+                _state.value = _state.value.copy(message = type.label + "：" + (t.message ?: "配置不完整，无法删除"))
+                return@launch
+            }
+            val ok = try {
+                // 同 setWebDav：provider 只保证 execute() 在 IO 上，读响应体需要调用方在 IO 线程
+                withContext(Dispatchers.IO) { provider.delete() }
+            } catch (t: Throwable) {
+                _state.value = _state.value.copy(message = "删除失败：" + (t.message ?: t::class.java.simpleName))
+                return@launch
+            }
+            if (ok && type == SyncProviderType.GIST) settings.setGistId("")
+            val fresh = settings.settings.first()
+            _state.value = _state.value.copy(
+                configuredProviders = configuredTypes(fresh),
+                message = if (ok) "已删除「" + type.label + "」云端的数据（本机数据未受影响）"
+                else "删除失败：" + type.label
             )
         }
     }
@@ -126,13 +176,19 @@ class SyncViewModel(
     /** GoogleSignIn 成功后保存账号名（GoogleAccountCredential 需要它来签发 appdata 令牌）。 */
     fun setGoogleAccount(email: String) {
         _state.value = _state.value.copy(googleAccount = email, message = "Google 账号已连接：" + email)
-        viewModelScope.launch { settings.setGoogleAccount(email) }
+        viewModelScope.launch {
+            settings.setGoogleAccount(email)
+            refreshConfiguredProviders()
+        }
     }
 
     /** 断开：仅清除本地标记。GMS 的授权无法由应用单方面撤销，用户可在 Google 账号设置里移除访问权限。 */
     fun clearGoogleAccount() {
         _state.value = _state.value.copy(googleAccount = "", message = "已断开 Google 账号（如需彻底撤销请到 Google 账号设置移除授权）")
-        viewModelScope.launch { settings.setGoogleAccount("") }
+        viewModelScope.launch {
+            settings.setGoogleAccount("")
+            refreshConfiguredProviders()
+        }
     }
 
     /** 设置同步口令（用于加密云端同步包）。 */
@@ -146,35 +202,77 @@ class SyncViewModel(
         _state.value = _state.value.copy(passphraseSet = true, passphraseInput = "", message = "同步口令已保存（请自行牢记，丢失后无法解密云端数据）")
     }
 
+    /**
+     * 保存 WebDAV 凭据并**实际测一次连通性**（按钮文案是「保存并连接」）。
+     *
+     * 用 pull() 探测：云端还没有备份时会收到 404，那也算连通——只有网络、认证或 TLS
+     * 失败才算失败。这样用户填错地址/密码时立刻能看到原因，不必等下一次同步。
+     */
     fun setWebDav(url: String, user: String, password: String) {
         _state.value = _state.value.copy(webdavUrl = url, webdavUser = user, webdavPassword = password)
-        viewModelScope.launch { settings.setWebDav(url, user); settings.setWebDavPassword(password) }
+        viewModelScope.launch {
+            settings.setWebDav(url, user)
+            settings.setWebDavPassword(password)
+            refreshConfiguredProviders()
+            if (url.isBlank()) {
+                _state.value = _state.value.copy(message = "已清除 WebDAV 配置")
+                return@launch
+            }
+            _state.value = _state.value.copy(message = "正在测试 WebDAV 连接…")
+            val result = try {
+                // 必须在 IO 线程调用：provider 里只有 execute() 自己切了 IO，读响应体仍在调用方线程
+                withContext(Dispatchers.IO) {
+                    SyncProviderFactory.createFor(appContext, settings.settings.first(), SyncProviderType.WEBDAV).pull()
+                }
+                "WebDAV 连接成功"
+            } catch (t: Throwable) {
+                "WebDAV 连接失败：" + (t.message ?: t::class.java.simpleName)
+            }
+            _state.value = _state.value.copy(message = result)
+        }
     }
 
     fun setGitHub(ownerRepo: String, token: String, path: String) {
         _state.value = _state.value.copy(githubOwnerRepo = ownerRepo, githubToken = token, githubPath = path)
-        viewModelScope.launch { settings.setGitHub(ownerRepo, path); settings.setGitHubToken(token) }
+        viewModelScope.launch {
+            settings.setGitHub(ownerRepo, path)
+            settings.setGitHubToken(token)
+            refreshConfiguredProviders()
+        }
     }
 
     /** 登录成功后由宿主 Activity 通知刷新状态。 */
     fun onOneDriveSignedIn() {
         _state.value = _state.value.copy(oneDriveConnected = true, message = "OneDrive 已连接")
+        viewModelScope.launch { refreshConfiguredProviders() }
     }
 
     /** 断开 OneDrive（清空本地令牌，不影响云端文件）。 */
     fun signOutOneDrive() {
         OneDriveAuth.signOut(appContext)
         _state.value = _state.value.copy(oneDriveConnected = false, message = "已断开 OneDrive")
+        viewModelScope.launch { refreshConfiguredProviders() }
     }
 
     fun setGitee(ownerRepo: String, path: String, token: String) {
         _state.value = _state.value.copy(giteeOwnerRepo = ownerRepo, giteePath = path, giteeToken = token)
-        viewModelScope.launch { settings.setGitee(ownerRepo, path, token) }
+        viewModelScope.launch {
+            settings.setGitee(ownerRepo, path, token)
+            refreshConfiguredProviders()
+        }
     }
 
     fun setGist(token: String) {
         _state.value = _state.value.copy(gistToken = token)
-        viewModelScope.launch { settings.setGistToken(token) }
+        viewModelScope.launch {
+            settings.setGistToken(token)
+            refreshConfiguredProviders()
+        }
+    }
+
+    /** 凭据变更后重算「云端数据」可删除列表：原先只在 init 算一次，保存后不刷新。 */
+    private suspend fun refreshConfiguredProviders() {
+        _state.value = _state.value.copy(configuredProviders = configuredTypes(settings.settings.first()))
     }
 
     fun setInterval(interval: SyncInterval) {

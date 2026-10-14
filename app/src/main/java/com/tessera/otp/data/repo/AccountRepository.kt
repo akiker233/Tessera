@@ -166,15 +166,61 @@ class AccountRepository(
     }
 
     suspend fun addCategory(name: String, colorArgb: Int): CategoryEntity {
-        val entity = CategoryEntity(id = UUID.randomUUID().toString(), name = name, colorArgb = colorArgb)
+        // 新分类排在末尾：给一个比现有最大值更大的 sortOrder，排序才稳定（否则全为 0 会退化成按名称排）
+        val nextOrder = (categoryDao.all().maxOfOrNull { it.sortOrder } ?: -1) + 1
+        val entity = CategoryEntity(
+            id = UUID.randomUUID().toString(),
+            name = name,
+            colorArgb = colorArgb,
+            sortOrder = nextOrder
+        )
         categoryDao.upsert(entity)
         return entity
     }
 
-    /** 删除分类：先把该分类下的条目（含回收站）改回未分类，再删除分类本身。 */
+    /** 重命名 / 改颜色统一走 upsert（按 id 覆盖）。 */
+    suspend fun upsertCategory(category: CategoryEntity) {
+        categoryDao.upsert(category.copy(updatedAt = System.currentTimeMillis()))
+    }
+
+    /** 按传入顺序重排：sortOrder 依次写为 0,1,2…（observeAll 正是按 sortOrder 排序）。 */
+    suspend fun reorderCategories(ordered: List<CategoryEntity>) {
+        ordered.forEachIndexed { index, category ->
+            if (category.sortOrder != index) {
+                categoryDao.upsert(category.copy(sortOrder = index, updatedAt = System.currentTimeMillis()))
+            }
+        }
+    }
+
+    /** 删除分类：先把该分类下的条目（含回收站）改回未分类，再写墓碑（软删除）。 */
     suspend fun deleteCategory(category: CategoryEntity) {
         accountDao.clearCategory(category.id)
-        categoryDao.delete(category)
+        categoryDao.softDelete(category.id, CategoryEntity.tombstoneName(category.id))
+        notifyLocalChange()
+    }
+
+    /** 单条归类：categoryId 为 null 表示移回「未分类」。 */
+    suspend fun setAccountCategory(id: String, categoryId: String?) {
+        accountDao.setCategory(id, categoryId)
+        notifyLocalChange()
+    }
+
+    /**
+     * 批量归类：把 [accountIds] 全部归入 [categoryId]，并把原本属于该分类但不在其中的条目移出。
+     *
+     * 「不在选中集合里的同分类条目」要移出，是为了让「勾选 = 结果」符合直觉：
+     * 取消勾选即等于从该分类移除。其它分类的条目不受影响。
+     */
+    suspend fun assignCategory(categoryId: String, accountIds: Set<String>) {
+        val current = accountDao.active()
+        current.forEach { account ->
+            val shouldBelong = account.id in accountIds
+            if (shouldBelong && account.categoryId != categoryId) {
+                accountDao.setCategory(account.id, categoryId)
+            } else if (!shouldBelong && account.categoryId == categoryId) {
+                accountDao.setCategory(account.id, null)
+            }
+        }
         notifyLocalChange()
     }
 
@@ -182,6 +228,14 @@ class AccountRepository(
 
     /** 同步用：导出全量（含回收站墓碑）。 */
     suspend fun allEntities(): List<AccountEntity> = accountDao.all()
+
+    /** 同步用：导出全量分类（含墓碑，删除才能被其它设备看到）。 */
+    suspend fun categoriesWithDeleted(): List<CategoryEntity> = categoryDao.allIncludingDeleted()
+
+    /** 同步用：写入合并后的分类（含墓碑）。 */
+    suspend fun upsertCategories(categories: List<CategoryEntity>) {
+        if (categories.isNotEmpty()) categoryDao.upsertAll(categories)
+    }
 
     /**
      * 同步用：导出全量条目并**解密**密钥。

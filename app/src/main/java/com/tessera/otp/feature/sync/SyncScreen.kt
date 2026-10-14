@@ -72,9 +72,11 @@ fun SyncScreen(
     onClearGoogleAccount: () -> Unit,
     onOneDriveSignIn: () -> Unit,
     onOneDriveSignOut: () -> Unit,
+    onDeleteCloud: (SyncProviderType) -> Unit,
     onSyncNow: () -> Unit
 ) {
     var showPassphraseDialog by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<SyncProviderType?>(null) }
 
     Column(
         modifier = Modifier
@@ -184,6 +186,32 @@ fun SyncScreen(
             }
         }
 
+        Text("云端数据", style = MaterialTheme.typography.labelLarge)
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "删除某个云端里保存的备份文件。只删云端，本机账号与分类不受影响；下次同步会把本机数据重新推上去。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (state.configuredProviders.isEmpty()) {
+                    Text("尚无已配置的后端", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    state.configuredProviders.forEach { type ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(type.label, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { pendingDelete = type }) {
+                                Text("删除", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Text("自动同步", style = MaterialTheme.typography.labelLarge)
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Column {
@@ -241,6 +269,27 @@ fun SyncScreen(
                 onSavePassphrase()
                 showPassphraseDialog = false
             }
+        )
+    }
+
+    pendingDelete?.let { type ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("删除云端数据？") },
+            text = {
+                Text(
+                    "将删除「" + type.label + "」里保存的备份文件，云端此前的备份会消失。\n" +
+                        "本机账号、分类与回收站都不受影响；下次同步会把本机数据重新上传。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val target = type
+                    pendingDelete = null
+                    onDeleteCloud(target)
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } }
         )
     }
 }

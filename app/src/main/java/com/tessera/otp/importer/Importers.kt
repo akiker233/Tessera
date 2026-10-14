@@ -10,7 +10,78 @@ import com.tessera.otp.importer.ImportJson.normalizeAlgorithm
 import com.tessera.otp.importer.ImportJson.obj
 import com.tessera.otp.importer.ImportJson.parseArray
 import com.tessera.otp.importer.ImportJson.parseObject
+import com.tessera.otp.sync.SyncCodec
+import com.tessera.otp.sync.TESSERA_FORMAT_MARKER
 import kotlinx.serialization.json.jsonObject
+
+/**
+ * Tessera 专属备份（本应用自己的导出格式）。
+ *
+ * 明文版是带 `app:"tessera"` 标记的 JSON（见 [com.tessera.otp.sync.VaultSnapshot]）；
+ * 加密版是同一份 JSON 经用户密码派生的 AES-256-GCM 信封（同样带标记 + ct/salt/nonce）。
+ * 加密版需要密码，由 [parseEncrypted] 处理。
+ */
+class TesseraImporter : Importer {
+    override val source = ImportSource.TESSERA
+
+    override fun canHandle(fileName: String, content: String): Boolean {
+        val root = ImportJson.parseObject(content) ?: return false
+        if (root.firstString("app") == TESSERA_FORMAT_MARKER) return true
+        return root.containsKey("ct") && root.containsKey("salt") && root.containsKey("nonce")
+    }
+
+    override fun parse(content: String): ImportResult = parseEncrypted(content, password = null)
+
+    /** @param password 加密备份的密码；明文备份传 null 即可。 */
+    fun parseEncrypted(content: String, password: String?): ImportResult {
+        val root = ImportJson.parseObject(content)
+            ?: return ImportResult(emptyList(), listOf(ImportIssue("Tessera", "不是合法 JSON")), source)
+        val encrypted = root.containsKey("ct")
+        val snapshot = if (encrypted) {
+            if (password.isNullOrEmpty()) {
+                return ImportResult(emptyList(), listOf(ImportIssue("Tessera", "备份已加密，请输入密码")), source, encrypted = true)
+            }
+            runCatching { SyncCodec.decode(content, password) }.getOrElse {
+                return ImportResult(emptyList(), listOf(ImportIssue("Tessera", "密码错误或文件已损坏")), source, encrypted = true)
+            }
+        } else {
+            runCatching { SyncCodec.decodePlain(content) }.getOrElse {
+                return ImportResult(emptyList(), listOf(ImportIssue("Tessera", "不是有效的 Tessera 备份")), source)
+            }
+        }
+
+        val categoryById = snapshot.categories.associateBy { it.id }
+        val categories = snapshot.categories
+            .filter { !it.isDeleted && it.name.isNotBlank() }
+            .map { ParsedCategory(name = it.name, colorArgb = it.colorArgb, sortOrder = it.sortOrder) }
+
+        val issues = mutableListOf<ImportIssue>()
+        val accounts = mutableListOf<ParsedAccount>()
+        snapshot.entries.filter { it.deletedAt == null }.forEachIndexed { index, entry ->
+            if (entry.secretBase32.isBlank()) {
+                issues += ImportIssue(
+                    entry.issuer.ifBlank { entry.accountName.ifBlank { "#" + index } },
+                    "缺少密钥"
+                )
+                return@forEachIndexed
+            }
+            accounts += ParsedAccount(
+                issuer = entry.issuer,
+                accountName = entry.accountName,
+                secretBase32 = entry.secretBase32,
+                algorithm = ImportJson.normalizeAlgorithm(entry.algorithm),
+                digits = clampDigits(entry.digits),
+                period = clampPeriod(entry.period),
+                isSteam = entry.isSteam,
+                source = source,
+                categoryName = entry.categoryId?.let { id ->
+                    categoryById[id]?.takeIf { !it.isDeleted }?.name?.takeIf { it.isNotBlank() }
+                }
+            )
+        }
+        return ImportResult(accounts, issues, source, encrypted = false, categories = categories)
+    }
+}
 
 /**
  * 2FAS（Android/iOS）JSON 导出。
@@ -403,6 +474,7 @@ class OtpAuthTextImporter : Importer {
 /** 各导入器的注册表：按顺序尝试 canHandle。 */
 object Importers {
     val all: List<Importer> = listOf(
+        TesseraImporter(),
         GoogleAuthenticatorImporter(),
         OtpAuthTextImporter(),
         TwoFasImporter(),
@@ -425,6 +497,12 @@ object Importers {
         }
         return ImportResult(emptyList(), listOf(ImportIssue(fileName, "无法识别的格式")))
     }
+
+    /** Tessera 专属格式：用用户输入的密码解密后解析（明文备份传空密码也可）。 */
+    fun parseTesseraWithPassword(content: String, password: String): ImportResult =
+        runCatching { TesseraImporter().parseEncrypted(content, password) }.getOrElse { error ->
+            ImportResult(emptyList(), listOf(ImportIssue(ImportSource.TESSERA.label, error.message ?: "解析异常")))
+        }
 
     /** 只解析指定来源（用户手动指定时用）。 */
     fun parseWith(source: ImportSource, content: String): ImportResult {

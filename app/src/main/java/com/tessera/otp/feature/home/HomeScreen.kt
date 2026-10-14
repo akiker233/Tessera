@@ -34,6 +34,9 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -83,6 +86,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import android.widget.Toast
+import com.tessera.otp.data.db.entity.CategoryEntity
 import com.tessera.otp.data.icon.IconRepository
 import com.tessera.otp.data.prefs.ListDensity
 import com.tessera.otp.ui.LetterAvatar
@@ -118,6 +122,8 @@ fun HomeScreen(
     var indicatorShownAt by remember { mutableStateOf(0L) }
     // 下拉那一瞬间 running 还没翻成 true，不能据此就认定「同步已结束」
     var sawRunning by remember { mutableStateOf(false) }
+    // 首页按分类分组时的收起状态（默认全部展开，只记录被收起的组 key）
+    var collapsedGroups by remember { mutableStateOf(setOf<String>()) }
     val latestStatus by rememberUpdatedState(syncStatus)
     LaunchedEffect(pulled, syncing) {
         if (!pulled) return@LaunchedEffect
@@ -247,6 +253,12 @@ fun HomeScreen(
                         }
                     }
                 } else {
+                    // 「全部」且未搜索时按分类折叠分组；选中某分类或搜索时为平铺结果
+                    val groups = if (state.selectedCategoryId == null && state.query.isBlank()) {
+                        buildCategoryGroups(state.items, state.categories)
+                    } else {
+                        emptyList()
+                    }
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -254,18 +266,48 @@ fun HomeScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(state.items, key = { it.id }) { item ->
-                            AccountRow(
-                                item = item,
-                                codesVisible = state.flags.codesVisible,
-                                density = density,
-                                icons = icons,
-                                onClick = { onItemClick(item) },
-                                onLongPress = { menuItemId = it.id },
-                                onMoveToTrash = { onMoveToTrash(item.id) },
-                                // 同步后账号有增删时，列表项淡入/位移，避免生硬跳变
-                                modifier = Modifier.animateItem()
-                            )
+                        if (groups.isEmpty()) {
+                            items(state.items, key = { it.id }) { item ->
+                                AccountRow(
+                                    item = item,
+                                    codesVisible = state.flags.codesVisible,
+                                    density = density,
+                                    icons = icons,
+                                    onClick = { onItemClick(item) },
+                                    onLongPress = { menuItemId = it.id },
+                                    onMoveToTrash = { onMoveToTrash(item.id) },
+                                    // 同步后账号有增删时，列表项淡入/位移，避免生硬跳变
+                                    modifier = Modifier.animateItem()
+                                )
+                            }
+                        } else {
+                            groups.forEach { group ->
+                                val collapsed = group.key in collapsedGroups
+                                item(key = "group:" + group.key) {
+                                    GroupHeader(
+                                        group = group,
+                                        collapsed = collapsed,
+                                        onToggle = {
+                                            collapsedGroups =
+                                                if (collapsed) collapsedGroups - group.key else collapsedGroups + group.key
+                                        }
+                                    )
+                                }
+                                if (!collapsed) {
+                                    items(group.items, key = { it.id }) { item ->
+                                        AccountRow(
+                                            item = item,
+                                            codesVisible = state.flags.codesVisible,
+                                            density = density,
+                                            icons = icons,
+                                            onClick = { onItemClick(item) },
+                                            onLongPress = { menuItemId = it.id },
+                                            onMoveToTrash = { onMoveToTrash(item.id) },
+                                            modifier = Modifier.animateItem()
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -446,6 +488,75 @@ private fun AccountRow(
         }
     }
 
+}
+
+/** 首页分组：一个分类（或「未分类」）对应的条目集合。 */
+private data class HomeGroup(
+    val key: String,
+    val name: String,
+    val colorArgb: Int?,
+    val items: List<HomeItem>
+)
+
+/** 「未分类」分组的固定 key。 */
+private const val UNGROUPED_KEY = "ungrouped"
+
+/**
+ * 把条目按分类归组，顺序跟随分类自身的排序，未分类（含指向已删除分类的孤儿条目）放最后。
+ *
+ * 一个分类都没有时返回空列表——首页保持原来的平铺列表，不给没建过分类的用户平白加一层目录。
+ */
+private fun buildCategoryGroups(items: List<HomeItem>, categories: List<CategoryEntity>): List<HomeGroup> {
+    if (categories.isEmpty()) return emptyList()
+    val byCategory = items.groupBy { it.categoryId }
+    val knownIds = categories.map { it.id }.toSet()
+    val groups = categories.mapNotNull { category ->
+        val list = byCategory[category.id].orEmpty()
+        if (list.isEmpty()) null else HomeGroup(category.id, category.name, category.colorArgb, list)
+    }.toMutableList()
+    val uncategorized = items.filter { it.categoryId == null || it.categoryId !in knownIds }
+    if (uncategorized.isNotEmpty()) {
+        groups.add(HomeGroup(UNGROUPED_KEY, "未分类", null, uncategorized))
+    }
+    return groups
+}
+
+/** 分组标题：文件夹图标 + 名称 + 数量 + 展开/收起箭头，整行可点。 */
+@Composable
+private fun GroupHeader(group: HomeGroup, collapsed: Boolean, onToggle: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Folder,
+            contentDescription = null,
+            tint = group.colorArgb?.let { Color(it) } ?: MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = group.name,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = group.items.size.toString(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.width(6.dp))
+        Icon(
+            imageVector = if (collapsed) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowUp,
+            contentDescription = if (collapsed) "展开" else "收起",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
 }
 
 /** 手动同步指示器的最短显示时长：太短的同步也要让用户看到反馈。 */

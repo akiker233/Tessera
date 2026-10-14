@@ -59,6 +59,19 @@ class GiteeProvider(
         }
     }
 
+    override suspend fun delete(): Boolean {
+        // Gitee 删除必须带 sha：先 GET 一次；文件不存在时 pull 返回 null → 幂等成功
+        val sha = pull()?.etag ?: return true
+        val url = apiUrl() + "?access_token=" + token + "&sha=" + sha +
+            "&message=delete%20tessera%20vault&branch=" + branch
+        val response = Http.execute(Request.Builder().url(url).delete().build())
+        response.use {
+            if (it.code == 404) return true
+            if (!it.isSuccessful) throw SyncException(Http.describe(it), it.code)
+            return true
+        }
+    }
+
     /** 极简 JSON 取值（与 GitHub 后端同一套做法，避免引入 JSON 解析依赖）。 */
     private fun extractField(json: String, field: String): String {
         val index = json.indexOf("\"" + field + "\"")

@@ -49,6 +49,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -84,6 +85,8 @@ import com.tessera.otp.sync.OneDriveAuth
 import com.tessera.otp.feature.settings.SettingsActions
 import com.tessera.otp.feature.settings.SettingsScreen
 import com.tessera.otp.feature.settings.SettingsSubRoute
+import com.tessera.otp.feature.settings.CategoryManageScreen
+import com.tessera.otp.feature.settings.CategoryAssignScreen
 import com.tessera.otp.feature.sync.SyncUiState
 import com.tessera.otp.feature.trash.TrashScreen
 import com.tessera.otp.ui.lock.LockScreen
@@ -345,8 +348,14 @@ private fun AppShell(
     }
 
     if (locked && hasPin) {
+        val biometricEnabled = settings?.biometricEnabled ?: true
+        // 进入锁屏时若已开启生物识别，自动弹出一次指纹/人脸；
+        // key 用 Unit：只在「进入锁屏」这一帧触发一次，取消/失败后静默回落到 PIN，不会反复重弹
+        LaunchedEffect(Unit) {
+            if (biometricEnabled && model.biometricAvailable) onRequestBiometric()
+        }
         LockScreen(
-            biometricEnabled = settings?.biometricEnabled ?: true,
+            biometricEnabled = biometricEnabled,
             biometricAvailable = model.biometricAvailable,
             onUnlockWithPin = { pin -> model.unlockWithPin(pin) },
             onUnlockWithBiometric = {
@@ -380,6 +389,7 @@ private fun AppShell(
         onThemeMode = model::setThemeMode,
         onListDensity = model::setListDensity,
         onOpenExport = { model.navigate(Screen.Export) },
+        onOpenCategories = { model.navigate(Screen.Categories) },
         onSyncNetworkTime = model::syncNetworkTime
     )
 
@@ -529,12 +539,42 @@ private fun AppShell(
                         onFileContent = model.importer::parseContent,
                         onScanned = model::onQrText,
                         onScanFailure = model.importer::reportScanFailure,
+                        onPassword = model.importer::submitPassword,
                         onConfirm = { model.importer.confirmImport() },
                         onReset = { model.importer.reset() },
                         onBack = model::back
                     )
                 }
                 is Screen.Export -> ExportRoute(model = model, onBack = model::back)
+
+                is Screen.Categories -> {
+                    val categoryState by model.categories.state.collectAsStateWithLifecycle()
+                    CategoryManageScreen(
+                        state = categoryState,
+                        onAdd = model.categories::add,
+                        onEdit = model.categories::edit,
+                        onDelete = model.categories::delete,
+                        onMove = model.categories::move,
+                        onManageAccounts = { category -> model.navigate(Screen.CategoryAssign(category.id)) },
+                        onBack = model::back
+                    )
+                }
+
+                is Screen.CategoryAssign -> {
+                    val categoryState by model.categories.state.collectAsStateWithLifecycle()
+                    val category = categoryState.rows.firstOrNull { it.entity.id == target.categoryId }?.entity
+                    if (category == null) {
+                        model.back()
+                    } else {
+                        CategoryAssignScreen(
+                            category = category,
+                            accounts = categoryState.accounts,
+                            categories = categoryState.rows.map { it.entity },
+                            onConfirm = { ids -> model.categories.assign(category, ids) },
+                            onBack = model::back
+                        )
+                    }
+                }
 
                 is Screen.Sync -> {
                     val syncState by model.sync.state.collectAsStateWithLifecycle()
@@ -580,6 +620,7 @@ private fun ImportRoute(
     onFileContent: (String, String) -> Unit,
     onScanned: (String) -> Unit,
     onScanFailure: (String) -> Unit,
+    onPassword: (String) -> Unit,
     onConfirm: () -> Unit,
     onReset: () -> Unit,
     onBack: () -> Unit
@@ -603,6 +644,7 @@ private fun ImportRoute(
                 onFileContent = onFileContent,
                 onScanned = onScanned,
                 onScanFailure = onScanFailure,
+                onPassword = onPassword,
                 onConfirm = onConfirm,
                 onReset = onReset
             )
@@ -653,6 +695,7 @@ private fun SyncRoute(
                 onClearGoogleAccount = model.sync::clearGoogleAccount,
                 onOneDriveSignIn = onOneDriveSignIn,
                 onOneDriveSignOut = onOneDriveSignOut,
+                onDeleteCloud = model.sync::deleteCloud,
                 onSyncNow = model.sync::runManualSync,
                 onSyncEnabled = model.sync::setSyncEnabled
             )
@@ -668,6 +711,7 @@ private fun ExportRoute(model: MainViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var format by remember { mutableStateOf(ExportFormat.JSON) }
+    var passphrase by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf(false) }
     var pending by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -715,22 +759,41 @@ private fun ExportRoute(model: MainViewModel, onBack: () -> Unit) {
                     label = { Text(option.label) }
                 )
             }
+            if (format == ExportFormat.TESSERA) {
+                OutlinedTextField(
+                    value = passphrase,
+                    onValueChange = { passphrase = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("密码（留空则不加密）") },
+                    singleLine = true,
+                    supportingText = {
+                        Text(if (passphrase.isNotEmpty()) "将用该密码加密整包；忘记密码将无法恢复。" else "留空导出为明文 JSON，便于查看但无保护。")
+                    }
+                )
+            }
             Button(onClick = { confirm = true }) { Text("导出为 " + format.label) }
             message?.let { text -> Text(text, color = MaterialTheme.colorScheme.primary) }
         }
     }
 
     if (confirm) {
+        val encrypting = format == ExportFormat.TESSERA && passphrase.isNotEmpty()
         AlertDialog(
             onDismissRequest = { confirm = false },
-            title = { Text("确认导出明文密钥？") },
-            text = { Text("导出的密钥等同于账号本身，可被任何持有者生成验证码。") },
+            title = { Text(if (encrypting) "确认加密导出？" else "确认导出明文密钥？") },
+            text = {
+                Text(
+                    if (encrypting) "备份将用你设置的密码加密，请牢记：忘记密码将无法恢复。"
+                    else "导出的密钥等同于账号本身，可被任何持有者生成验证码。"
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     confirm = false
                     scope.launch {
                         val accounts = model.accountsForExport()
-                        pending = Exporter.build(accounts, format)
+                        val categories = if (format == ExportFormat.TESSERA) model.categoriesForExport() else emptyList()
+                        pending = Exporter.build(accounts, format, categories, passphrase)
                         saver.launch(format.fileName)
                     }
                 }) { Text("继续导出") }

@@ -63,6 +63,7 @@ data class SettingsActions(
     val onThemeMode: (ThemeMode) -> Unit,
     val onListDensity: (ListDensity) -> Unit,
     val onOpenExport: () -> Unit,
+    val onOpenCategories: () -> Unit,
     val onSyncNetworkTime: () -> Unit
 )
 
@@ -136,6 +137,15 @@ fun SettingsScreen(
                     onClick = { onOpenSection(SettingsSection.DATA) }
                 )
             }
+        }
+
+        // 分类管理是独立页面（不属于任何分区），直接挂在根页，省得先进「数据」再找
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            ChoiceRow(
+                title = "分类管理",
+                subtitle = "新建 / 重命名 / 改色 / 删除 / 排序 · 选择账号归类（首页可按分类分组查看）",
+                onClick = actions.onOpenCategories
+            )
         }
     }
 }
@@ -407,13 +417,13 @@ private fun DataSettingsScreen(settings: AppSettings, actions: SettingsActions, 
                 HorizontalDivider()
                 ChoiceRow(
                     title = "导入",
-                    subtitle = "2FAS / Aegis / andOTP / Raivo / LastPass / Google Authenticator",
+                    subtitle = "2FAS / Aegis / andOTP / Raivo / LastPass / Google Authenticator / Tessera",
                     onClick = actions.onOpenImport
                 )
                 HorizontalDivider()
                 ChoiceRow(
                     title = "导出验证码",
-                    subtitle = "JSON / otpauth / CSV，包含账户与密钥（明文）",
+                    subtitle = "Tessera 备份（可加密）/ JSON / otpauth / CSV",
                     onClick = actions.onOpenExport
                 )
             }

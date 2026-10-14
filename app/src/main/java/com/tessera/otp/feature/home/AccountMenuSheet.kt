@@ -85,17 +85,17 @@ fun AccountMenuSheet(
         }
         ListItem(
             modifier = Modifier.clickable(onClick = onCopy),
-            leadingContent = { Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            leadingContent = { Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
             headlineContent = { Text("复制令牌") }
         )
         ListItem(
             modifier = Modifier.clickable(onClick = onEdit),
-            leadingContent = { Icon(Icons.Filled.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            leadingContent = { Icon(Icons.Filled.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
             headlineContent = { Text("编辑") }
         )
         ListItem(
             modifier = Modifier.clickable(onClick = onDelete),
-            leadingContent = { Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            leadingContent = { Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
             headlineContent = { Text("删除") }
         )
         Spacer(Modifier.height(24.dp))

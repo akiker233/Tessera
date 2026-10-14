@@ -68,6 +68,10 @@ interface AccountDao {
     @Query("UPDATE accounts SET categoryId = NULL, updatedAt = :now, syncRev = syncRev + 1 WHERE categoryId = :categoryId")
     suspend fun clearCategory(categoryId: String, now: Long = System.currentTimeMillis())
 
+    /** 归类：把单条条目的分类设为 categoryId（null 表示移回未分类）。 */
+    @Query("UPDATE accounts SET categoryId = :categoryId, updatedAt = :now, syncRev = syncRev + 1 WHERE id = :id")
+    suspend fun setCategory(id: String, categoryId: String?, now: Long = System.currentTimeMillis())
+
     @Query("SELECT * FROM accounts WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
     fun observeTrash(): Flow<List<AccountEntity>>
 
@@ -88,17 +92,26 @@ interface AccountDao {
 @Dao
 interface CategoryDao {
 
-    @Query("SELECT * FROM categories ORDER BY sortOrder ASC, name COLLATE NOCASE ASC")
+    /** 未删除的分类（首页分组与筛选只看这些）。 */
+    @Query("SELECT * FROM categories WHERE deletedAt IS NULL ORDER BY sortOrder ASC, name COLLATE NOCASE ASC")
     fun observeAll(): Flow<List<CategoryEntity>>
 
-    @Query("SELECT * FROM categories ORDER BY sortOrder ASC, name COLLATE NOCASE ASC")
+    @Query("SELECT * FROM categories WHERE deletedAt IS NULL ORDER BY sortOrder ASC, name COLLATE NOCASE ASC")
     suspend fun all(): List<CategoryEntity>
+
+    /** 同步用：含墓碑，删除才能被其它设备看到。 */
+    @Query("SELECT * FROM categories ORDER BY sortOrder ASC, name COLLATE NOCASE ASC")
+    suspend fun allIncludingDeleted(): List<CategoryEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(category: CategoryEntity)
 
-    @Delete
-    suspend fun delete(category: CategoryEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(categories: List<CategoryEntity>)
+
+    /** 软删除：写入墓碑并把 name 改成含 id 的唯一串，避免与同名新建分类撞唯一索引。 */
+    @Query("UPDATE categories SET deletedAt = :now, updatedAt = :now, name = :tombstoneName WHERE id = :id")
+    suspend fun softDelete(id: String, tombstoneName: String, now: Long = System.currentTimeMillis())
 
     @Query("SELECT COUNT(*) FROM accounts WHERE categoryId = :categoryId AND deletedAt IS NULL")
     suspend fun accountCount(categoryId: String): Int

@@ -36,6 +36,9 @@ sealed interface Screen {
     data object Import : Screen
     data object Sync : Screen
     data object Export : Screen
+    data object Categories : Screen
+    /** 分类归类页：把账号多选归入 categoryId 指定的分类。 */
+    data class CategoryAssign(val categoryId: String) : Screen
     data class Edit(val accountId: String?) : Screen
 }
 
@@ -88,6 +91,11 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
     val home: HomeViewModel by lazy { HomeViewModel(requireRepository(), container.settings) }
     val trash: TrashViewModel by lazy { TrashViewModel(requireRepository()) }
     val importer: ImportViewModel by lazy { ImportViewModel(requireRepository()) }
+
+    /** 分类（文件夹）管理 ViewModel（设置 → 数据 → 分类管理）。 */
+    val categories: com.tessera.otp.feature.settings.CategoryManageViewModel by lazy {
+        com.tessera.otp.feature.settings.CategoryManageViewModel(requireRepository())
+    }
 
     /** 同步页 ViewModel；周期任务由 Activity 注入的 scheduler 注册。 */
     val sync: SyncViewModel by lazy {
@@ -262,6 +270,12 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
     suspend fun accountsForExport(): List<com.tessera.otp.data.repo.Account> =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             requireRepository().observeActive().first().filter { it.usable }
+        }
+
+    /** 导出用：取当前全部未删除分类（Tessera 备份会连同分类一起导出）。 */
+    suspend fun categoriesForExport(): List<com.tessera.otp.data.db.entity.CategoryEntity> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            requireRepository().categories()
         }
 
 

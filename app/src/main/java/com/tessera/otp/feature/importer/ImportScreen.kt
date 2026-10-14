@@ -21,12 +21,20 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
@@ -48,6 +56,8 @@ fun ImportScreen(
     onScanned: (String) -> Unit,
     /** 图片识别失败时的可读原因（避免静默无反应）。 */
     onScanFailure: (String) -> Unit,
+    /** Tessera 加密备份：用户输入的密码。 */
+    onPassword: (String) -> Unit,
     onConfirm: () -> Unit,
     onReset: () -> Unit
 ) {
@@ -87,7 +97,7 @@ fun ImportScreen(
     ) {
         Text("导入其他验证器", style = MaterialTheme.typography.titleLarge)
         Text(
-            text = "支持 2FAS、Stratum、Aegis、andOTP、Raivo OTP、LastPass 的导出文件，以及 Google Authenticator 迁移二维码。",
+            text = "支持 Tessera 专属备份（可加密，含分类）、2FAS、Stratum、Aegis、andOTP、Raivo OTP、LastPass 的导出文件，以及 Google Authenticator 迁移二维码。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -99,13 +109,22 @@ fun ImportScreen(
             }) { Text("从图片识别") }
         }
 
-        state.message?.let { message ->
-            AlertDialog(
-                onDismissRequest = onReset,
-                title = { Text(if (state.encrypted) "备份已加密" else "导入提示") },
-                text = { Text(message) },
-                confirmButton = { TextButton(onClick = onReset) { Text("知道了") } }
+        if (state.encrypted && state.canDecrypt) {
+            TesseraPasswordDialog(
+                message = state.message,
+                busy = state.busy,
+                onSubmit = onPassword,
+                onDismiss = onReset
             )
+        } else {
+            state.message?.let { message ->
+                AlertDialog(
+                    onDismissRequest = onReset,
+                    title = { Text(if (state.encrypted) "备份已加密" else "导入提示") },
+                    text = { Text(message) },
+                    confirmButton = { TextButton(onClick = onReset) { Text("知道了") } }
+                )
+            }
         }
         state.fileName?.let { name ->
             val detected = state.detected?.label ?: "未识别"
@@ -113,7 +132,11 @@ fun ImportScreen(
         }
 
         if (state.preview.isNotEmpty()) {
-            Text("将导入 " + state.preview.size + " 条（已存在同名条目会自动跳过）", style = MaterialTheme.typography.labelLarge)
+            val categoryHint = if (state.categories.isNotEmpty()) "、分类 " + state.categories.size + " 个" else ""
+            Text(
+                "将导入 " + state.preview.size + " 条" + categoryHint + "（已存在同名条目会自动跳过）",
+                style = MaterialTheme.typography.labelLarge
+            )
             LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
                 items(state.preview) { account ->
                     Card(
@@ -148,6 +171,41 @@ fun ImportScreen(
             }
         }
     }
+}
+
+/** Tessera 加密备份的密码输入对话框；密码错误会带出新的提示文案，可重试。 */
+@Composable
+private fun TesseraPasswordDialog(
+    message: String?,
+    busy: Boolean,
+    onSubmit: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var password by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("请输入备份密码") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(message ?: "这是一份加密的 Tessera 备份，请输入导出时设置的密码。")
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("密码") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSubmit(password) },
+                enabled = password.isNotEmpty() && !busy
+            ) { Text("解密") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
 }
 
 /** 读取 content:// 的显示文件名。 */

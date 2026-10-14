@@ -12,6 +12,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /** 导入来源。 */
 enum class ImportSource(val label: String, val extensions: List<String>) {
+    TESSERA("Tessera 备份", listOf("tessera", "json")),
     TWO_FAS("2FAS", listOf("2fas", "json")),
     STRATUM("Stratum", listOf("json")),
     AEGIS("Aegis", listOf("json")),
@@ -30,7 +31,16 @@ data class ParsedAccount(
     val digits: Int = 6,
     val period: Int = 30,
     val isSteam: Boolean = false,
-    val source: ImportSource
+    val source: ImportSource,
+    /** 该条目所属分类名（仅 Tessera 备份携带；落库时按名字匹配或新建分类）。 */
+    val categoryName: String? = null
+)
+
+/** 解析出的分类（仅 Tessera 备份携带）。 */
+data class ParsedCategory(
+    val name: String,
+    val colorArgb: Int = 0xFF3B5BDB.toInt(),
+    val sortOrder: Int = 0
 )
 
 /** 单个条目的解析失败原因，用于导入后的汇总报告。 */
@@ -40,7 +50,9 @@ data class ImportResult(
     val accounts: List<ParsedAccount>,
     val issues: List<ImportIssue> = emptyList(),
     val detectedSource: ImportSource? = null,
-    val encrypted: Boolean = false
+    val encrypted: Boolean = false,
+    /** 备份里携带的分类（仅 Tessera 备份有）。 */
+    val categories: List<ParsedCategory> = emptyList()
 )
 
 /**
