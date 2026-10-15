@@ -33,8 +33,8 @@ android {
         applicationId = "com.tessera.otp"
         minSdk = 30
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // OneDrive OAuth 客户端 ID：从 local.properties 注入，不硬编码进源码/仓库
         buildConfigField("String", "ONEDRIVE_CLIENT_ID", "\"$onedriveClientId\"")
