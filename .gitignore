@@ -9,6 +9,10 @@ keystore.properties
 *.jks
 *.keystore
 
+# Local tool credentials (e.g. FIGMA_TOKEN written by the figma-mobile skill)
+.env
+.env.local
+
 # IDE
 /.idea
 *.iml
