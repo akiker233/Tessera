@@ -1,0 +1,8 @@
+node_modules/
+.astro/
+dist/
+.env
+.env.local
+
+# 旧的 KV 静态资源 Worker 工具链（已被 Astro + Pages 取代，仅保留在本机）
+legacy-kv-worker/

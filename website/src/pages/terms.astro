@@ -1,0 +1,94 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base
+  title="服务条款 · 凭牌 Tessera"
+  description="凭牌（Tessera）服务条款：基于 GPL-3.0 按「原样」提供，无任何担保；使用前请了解密钥与同步口令的保管责任。"
+>
+<div class="doc-hero">
+  <div class="wrap">
+    <h1>服务条款</h1>
+    <p>适用于「凭牌 Tessera」Android 应用（包名 <code>com.tessera.otp</code>）及本网站 · 生效日期：2026 年 10 月 15 日</p>
+  </div>
+</div>
+
+<main class="doc">
+  <div class="wrap">
+    <div class="doc-inner">
+
+      <div class="toc">
+        <strong>目录</strong>
+        <ol>
+          <li><a href="#s1">接受条款</a></li>
+          <li><a href="#s2">许可与源码</a></li>
+          <li><a href="#s3">按「原样」提供</a></li>
+          <li><a href="#s4">使用者的安全责任</a></li>
+          <li><a href="#s5">使用限制</a></li>
+          <li><a href="#s6">第三方服务</a></li>
+          <li><a href="#s7">责任限制</a></li>
+          <li><a href="#s8">无官方关联</a></li>
+          <li><a href="#s9">条款变更</a></li>
+          <li><a href="#s10">适用法律</a></li>
+          <li><a href="#s11">联系我们</a></li>
+        </ol>
+      </div>
+
+      <div class="note">
+        <p><strong>请先读这一条。</strong>本应用是双因素认证工具，验证码是保护你账号的最后一道防线。请务必离线备份你的密钥与恢复码，并牢记你的同步口令——开发者无法为你找回任何密钥或口令。</p>
+      </div>
+
+      <h2 id="s1">1. 接受条款</h2>
+      <p>下载、安装或使用凭牌（Tessera，以下简称「本应用」）即表示你已阅读并同意本条款。如果你不同意其中任何内容，请不要使用本应用。</p>
+
+      <h2 id="s2">2. 许可与源码</h2>
+      <p>本应用是自由软件，依照 <strong>GNU General Public License v3.0</strong>（GPL-3.0）发布，源码公开在 <a href="https://github.com/akiker233/Tessera" rel="noopener noreferrer">github.com/akiker233/Tessera</a>。你可依据该许可自由地使用、研究、修改与再分发本软件，但须遵守其条件，包括：</p>
+      <ul>
+        <li>再分发时保留版权声明与许可声明；</li>
+        <li>你分发的衍生作品同样以 GPL-3.0 授权并公开源码；</li>
+        <li>不得对接收者施加超出 GPL-3.0 的额外限制。</li>
+      </ul>
+      <p>完整条款以仓库中的 <a href="https://github.com/akiker233/Tessera/blob/main/LICENSE" rel="noopener noreferrer">LICENSE</a> 文件为准；本页说明与 GPL-3.0 有冲突时，以 GPL-3.0 为准。</p>
+
+      <h2 id="s3">3. 按「原样」提供</h2>
+      <p>本应用按「原样」（AS IS）提供，不附带任何形式的明示或默示担保，包括但不限于对适销性、特定用途适用性、不侵权以及<strong>不中断、无错误、能防止数据丢失</strong>的担保。你自行承担使用本应用的全部风险。</p>
+
+      <h2 id="s4">4. 使用者的安全责任</h2>
+      <ul>
+        <li><strong>保管好密钥与恢复码。</strong>请在启用双因素认证时，将服务商提供的恢复码或密钥另行离线备份。手机丢失、系统损坏或误删数据时，这是你唯一的补救手段。</li>
+        <li><strong>牢记同步口令。</strong>同步口令仅保存在你的设备上、不会上传。口令一旦遗忘，已同步到云端的备份将<strong>永久无法解密</strong>，任何一方（包括开发者与云服务商）都无法协助恢复。</li>
+        <li><strong>自行维护备份。</strong>本应用提供导出功能，建议定期导出备份文件并妥善保管。</li>
+        <li><strong>设备与系统安全。</strong>请保持系统更新、设置可靠的锁屏方式，并谨慎对待已 root 或安装未知来源应用的设备。</li>
+        <li><strong>无找回服务。</strong>本应用不提供账号、无云端托管，因此<strong>不提供任何形式的账号找回、密钥恢复或口令重置服务</strong>。</li>
+      </ul>
+      <p>因设备丢失、损坏、误操作、口令遗忘、密钥泄露或未备份等原因造成的任何损失，由你自行承担。</p>
+
+      <h2 id="s5">5. 使用限制</h2>
+      <p>你同意不将本应用用于任何违法用途，不利用本应用实施未经授权的访问、欺诈或其他侵害他人权益的行为，并遵守你所在国家或地区的法律法规。本应用是通用工具，其合法性取决于你的具体用途。</p>
+
+      <h2 id="s6">6. 第三方服务</h2>
+      <p>云同步后端（包括但不限于 Google Drive、Microsoft OneDrive、GitHub、Gitee，以及你自行提供的 WebDAV 或 S3 对象存储）由第三方独立运营。其可用性、性能、费用、配额与数据处理规则均由各自的服务商决定并可能随时变化，我们不对其作出任何承诺。</p>
+      <p>你需要在对应服务商处自行承担注册、授权与费用义务，并遵守其服务条款。因第三方服务的中断、变更、故障、限流或数据丢失所造成的后果，我们不承担责任。</p>
+
+      <h2 id="s7">7. 责任限制</h2>
+      <p>在适用法律允许的最大范围内，开发者不对因使用或无法使用本应用而产生的任何间接、附带、特殊、惩罚性或后果性损害（包括但不限于账号无法登录、数据丢失、业务中断、利润损失）承担责任。</p>
+      <p>本应用免费提供，因此开发者对你承担的赔偿责任总额，以你为本应用实际支付的费用为限（即人民币 0 元）。</p>
+
+      <h2 id="s8">8. 无官方关联</h2>
+      <p>本应用是独立的个人开源项目，与 Google、Microsoft、GitHub、Gitee 以及任何验证码服务提供商均无隶属、合作、赞助或背书关系。「Google」「Google Drive」「Microsoft」「OneDrive」「GitHub」「Gitee」等名称与商标归其各自所有者所有，本应用仅在必要范围内以描述性方式提及。</p>
+
+      <h2 id="s9">9. 条款变更</h2>
+      <p>我们可能随功能调整而更新本条款，更新后的版本将发布在本页面并注明生效日期。你在条款更新后继续使用本应用，即视为接受更新后的条款。</p>
+
+      <h2 id="s10">10. 适用法律</h2>
+      <p>本条款适用中华人民共和国法律（不含冲突法规则）。若你所在国家或地区的强制性消费者保护规定赋予你额外权利，则该等规定在其适用范围内优先。</p>
+
+      <h2 id="s11">11. 联系我们</h2>
+      <p>对本条款有疑问，欢迎在项目仓库提交 Issue：</p>
+      <p><a href="https://github.com/akiker233/Tessera/issues" rel="noopener noreferrer">github.com/akiker233/Tessera/issues</a></p>
+      <p style="color:var(--muted);font-size:14.2px">如需其它联系方式，可通过上述仓库的维护者主页获取。</p>
+
+    </div>
+  </div>
+</main>
+</Base>

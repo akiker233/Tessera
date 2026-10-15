@@ -1,0 +1,167 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base
+  title="凭牌 Tessera · 本地优先的开源 Android TOTP 验证器"
+  description="凭牌（Tessera）是一款本地优先的开源 Android 双因素验证码（TOTP）应用：数据库加密存储、多云端到端加密备份、支持 2FAS / Aegis / Google Authenticator 等来源导入。"
+  ogTitle="凭牌 Tessera · 本地优先的开源 Android TOTP 验证器"
+  ogDescription="验证码全部在设备上生成，密钥加密存储；备份端到端加密后可同步到你自己选择的云。"
+  ogImage="https://raw.githubusercontent.com/akiker233/Tessera/main/branding/tessera-round-192.png"
+>
+<div class="hero">
+  <div class="wrap">
+    <img class="hero-logo" src="/assets/logo.svg" alt="凭牌 Tessera 图标" />
+    <h1>凭牌 Tessera<br /><span>本地优先的 Android 双因素验证器</span></h1>
+    <p class="lead">验证码全部在你的设备上生成，条目密钥经 Android Keystore 主密钥加密后写入加密数据库。需要跨设备时，把<strong>端到端加密</strong>的备份同步到你自己选择的云——服务商只能看到密文。</p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="https://github.com/akiker233/Tessera/releases/latest" rel="noopener">下载 APK</a>
+      <a class="btn btn-ghost" href="https://github.com/akiker233/Tessera" rel="noopener">查看源码</a>
+    </div>
+    <div class="tagline-badges">
+      <span>Android 11+（API 30）</span>
+      <span>Kotlin · Jetpack Compose</span>
+      <span>GPL-3.0 开源</span>
+      <span>无广告 · 无统计</span>
+      <span>7 种同步后端</span>
+    </div>
+  </div>
+</div>
+
+<section id="features">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>为「密钥不该离开你的手」而设计</h2>
+      <p>不注册账号、不接入统计或广告 SDK，也没有中间服务器。所有网络请求都发往你自己填写的地址。</p>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>本地优先</h3>
+        <p>数据库由 SQLCipher 加密，条目密钥由 Android Keystore 中的 AES-256-GCM 主密钥独立包裹，主密钥不出安全硬件。</p>
+      </div>
+      <div class="card">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 18H7a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 17.9 9.4 4.3 4.3 0 0 1 17.5 18Z"/></svg>自带云</h3>
+        <p>WebDAV、S3 对象存储、GitHub 仓库、Gist、Gitee、Google Drive、OneDrive —— 7 种后端任选，可同时启用多个。</p>
+      </div>
+      <div class="card">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>多账号</h3>
+        <p>WebDAV、S3、Google Drive、OneDrive 都能配置多份账号/服务器/存储桶，各自独立同步，每种后端还能起备注名区分。</p>
+      </div>
+      <div class="card">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>易迁移</h3>
+        <p>支持 2FAS、Aegis、andOTP、Raivo、LastPass、Stratum、Google Authenticator 等来源导入，也可拍照或选图识别二维码。</p>
+      </div>
+      <div class="card">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="19" cy="13" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="10" cy="19" r="2.5"/></svg>现代界面</h3>
+        <p>Jetpack Compose + Material 3，支持动态取色、分类折叠分组、模糊搜索与即将过期时淡入下一个令牌。</p>
+      </div>
+      <div class="card">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3.2"/></svg>扫码入库</h3>
+        <p>CameraX 实时扫码 + 相册图片识别，使用离线捆绑的 ML Kit 条码库，没有 Google Play 服务也能解码。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>功能一览</h2>
+      <p>除了标准的 TOTP，还有一些日常真正会用到的细节。</p>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>功能</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>TOTP 生成</td><td>RFC 6238，支持 SHA1 / SHA256 / SHA512、6 / 7 / 8 位、自定义周期，兼容 Steam 字母表</td></tr>
+          <tr><td>服务图标</td><td>内置 1954 张图标，按发行方名称归一化自动匹配，区分浅色 / 深色变体</td></tr>
+          <tr><td>云同步</td><td>手动同步 + 后台自动同步（15 分钟 ~ 1 天）；按条目版本号合并，删除以墓碑参与，绝不盲写覆盖</td></tr>
+          <tr><td>云端数据管理</td><td>查看各后端上的备份，并可单独删除某一个后端的云端数据（不影响本机）</td></tr>
+          <tr><td>分类</td><td>分类筛选、首页折叠分组、批量归类，分类数据随同步一起走</td></tr>
+          <tr><td>回收站</td><td>软删除 + 保留期（默认 30 天），支持还原 / 彻底删除 / 清空</td></tr>
+          <tr><td>应用锁</td><td>PIN（PBKDF2-HMAC-SHA256，21 万次迭代）＋ 生物识别，锁定时自动唤起</td></tr>
+          <tr><td>隐私保护</td><td>默认禁止截图（<code>FLAG_SECURE</code>，可在设置中开启）；编辑条目不回填明文密钥</td></tr>
+          <tr><td>导出 / 导入</td><td>支持 Tessera 专属备份格式，可选不加密或使用密码进行 AES-256-GCM 加密</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="security">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>安全设计</h2>
+      <p>密钥的分层与隔离方式，决定了「即使云端被看光，也读不出一个验证码」。</p>
+    </div>
+    <ul class="check-list">
+      <li><strong>本地机密。</strong>SQLCipher 加密数据库；库口令与每个条目的密钥都由 Android Keystore 中的 AES-256-GCM 主密钥包裹。</li>
+      <li><strong>云端密文。</strong>同步包是 AES-256-GCM 加密的 JSON，密钥由一个<strong>独立的同步口令</strong>派生，与 PIN、Keystore 主密钥彼此隔离。服务商无法读取内容。</li>
+      <li><strong>最小权限。</strong>Google Drive 只申请 <code>drive.appdata</code>（应用私有目录，网页版不可见）；OneDrive 只申请 <code>Files.ReadWrite.AppFolder</code>，均无法访问你的其它文件。</li>
+      <li><strong>令牌保护。</strong>OAuth 的 access / refresh token 经 Keystore 主密钥加密后落盘，明文不写入磁盘。</li>
+      <li><strong>界面防泄露。</strong>默认禁止系统截图与最近任务预览；编辑已有条目时不回填明文密钥，避免密钥进入输入法与剪贴板缓存。</li>
+      <li><strong>合并安全。</strong>条目级版本号逐级比较，删除以墓碑参与同步，任何一侧都不会被盲目覆盖。</li>
+    </ul>
+    <div class="note" style="max-width:820px">
+      <p><strong>请务必留存同步口令。</strong>云端的备份用你的同步口令加密，口令只保存在本机、不会上传。一旦遗忘，云端备份将无法解密——任何人也帮不了你。</p>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="download">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>下载与安装</h2>
+      <p>发布包由 CI 自动构建并使用同一份密钥签名，按 ABI 拆分。不确定架构就选 <code>universal</code>。</p>
+    </div>
+    <div class="table-scroll" style="margin-bottom:26px">
+      <table>
+        <thead>
+          <tr><th>产物</th><th>适用</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>Tessera-&lt;版本&gt;-arm64-v8a.apk</code></td><td>绝大多数现代手机（推荐）</td></tr>
+          <tr><td><code>Tessera-&lt;版本&gt;-armeabi-v7a.apk</code></td><td>较旧的 32 位 ARM 设备</td></tr>
+          <tr><td><code>Tessera-&lt;版本&gt;-x86_64.apk</code> / <code>-x86.apk</code></td><td>模拟器与 x86 设备</td></tr>
+          <tr><td><code>Tessera-&lt;版本&gt;-universal.apk</code></td><td>一包通吃，体积略大</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="hero-actions" style="justify-content:flex-start;margin-top:0">
+      <a class="btn btn-primary" style="background:var(--brand);color:#fff" href="https://github.com/akiker233/Tessera/releases/latest" rel="noopener">前往 Releases 下载</a>
+      <a class="btn btn-ghost" style="border-color:var(--border);color:var(--brand)" href="https://github.com/akiker233/Tessera#%E4%BB%8E%E6%BA%90%E7%A0%81%E6%9E%84%E5%BB%BA" rel="noopener">从源码构建</a>
+    </div>
+    <p style="color:var(--muted);font-size:14.2px;margin-top:18px">要求 Android 11（API 30）及以上。安装前请在系统中允许「未知来源应用」。本项目为个人开源项目，未上架任何应用商店。</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <h2>常见问题</h2>
+    </div>
+    <details class="faq">
+      <summary>应用会上传我的验证码吗？</summary>
+      <p>不会。验证码在设备本地按时间戳计算，不需要网络。除非你自己开启云同步，应用不会向外发送任何数据。</p>
+    </details>
+    <details class="faq">
+      <summary>服务商能看到我的密钥吗？</summary>
+      <p>看不到。同步包在设备上就完成了加密，云端只有密文。开发者同样无法解密——所以口令必须由你自己保管。</p>
+    </details>
+    <details class="faq">
+      <summary>换手机怎么办？</summary>
+      <p>先在新设备上设置<strong>同一个同步口令</strong>并绑定同一个云后端，再执行同步即可拉回条目；也可以先导出备份文件再导入。</p>
+    </details>
+    <details class="faq">
+      <summary>为什么没有 iOS 版 / 网页版？</summary>
+      <p>本项目目前只面向 Android。它是个人维护的开源项目，范围有意保持克制，以免削弱安全审查所需的透明度。</p>
+    </details>
+    <details class="faq">
+      <summary>可以免费商用或二次分发吗？</summary>
+      <p>可以，但需遵守 GPL-3.0：衍生作品同样开源、保留版权声明且不提供担保。详见 <a href="/terms.html">服务条款</a>。</p>
+    </details>
+  </div>
+</section>
+</Base>

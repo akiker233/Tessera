@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108" role="img" aria-label="凭牌 Tessera">
+  <rect width="108" height="108" rx="24" fill="#2B3A8F"/>
+  <path fill="#FFFFFF" d="M36.5,33 H71.5 A7.5,7.5 0 0 1 79,40.5 A7.5,7.5 0 0 1 71.5,48 H36.5 A7.5,7.5 0 0 1 29,40.5 A7.5,7.5 0 0 1 36.5,33 Z"/>
+  <path fill="#FFFFFF" d="M54,33 A7.5,7.5 0 0 1 61.5,40.5 V68.5 A7.5,7.5 0 0 1 54,76 A7.5,7.5 0 0 1 46.5,68.5 V40.5 A7.5,7.5 0 0 1 54,33 Z"/>
+</svg>

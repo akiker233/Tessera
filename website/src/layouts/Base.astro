@@ -1,0 +1,41 @@
+---
+import HeaderFull from "../components/HeaderFull.astro";
+import HeaderMinimal from "../components/HeaderMinimal.astro";
+import FooterFull from "../components/FooterFull.astro";
+import FooterMinimal from "../components/FooterMinimal.astro";
+
+interface Props {
+  title: string;
+  description?: string;
+  ogTitle?: string;
+  ogDescription?: string;
+  ogImage?: string;
+  minimal?: boolean;
+  noindex?: boolean;
+}
+
+const { title, description, ogTitle, ogDescription, ogImage, minimal = false, noindex = false } = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{title}</title>
+{description && <meta name="description" content={description} />}
+{noindex && <meta name="robots" content="noindex" />}
+<meta name="theme-color" content="#2B3A8F" />
+<link rel="icon" href="/assets/logo.svg" />
+{ogTitle && <meta property="og:type" content="website" />}
+{ogTitle && <meta property="og:title" content={ogTitle} />}
+{ogDescription && <meta property="og:description" content={ogDescription} />}
+{ogImage && <meta property="og:image" content={ogImage} />}
+<link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+{minimal ? <HeaderMinimal /> : <HeaderFull />}
+<slot />
+{minimal ? <FooterMinimal /> : <FooterFull />}
+</body>
+</html>

@@ -1,0 +1,112 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base
+  title="隐私政策 · 凭牌 Tessera"
+  description="凭牌（Tessera）隐私政策：不收集个人信息、无自建服务器、无统计与广告 SDK；云同步内容端到端加密，服务商与开发者均无法读取。"
+>
+<div class="doc-hero">
+  <div class="wrap">
+    <h1>隐私政策</h1>
+    <p>适用于「凭牌 Tessera」Android 应用（包名 <code>com.tessera.otp</code>）及本网站 · 生效日期：2026 年 10 月 15 日</p>
+  </div>
+</div>
+
+<main class="doc">
+  <div class="wrap">
+    <div class="doc-inner">
+
+      <div class="toc">
+        <strong>目录</strong>
+        <ol>
+          <li><a href="#s1">概述</a></li>
+          <li><a href="#s2">我们收集哪些信息</a></li>
+          <li><a href="#s3">数据存储在哪里</a></li>
+          <li><a href="#s4">权限说明</a></li>
+          <li><a href="#s5">云同步如何工作</a></li>
+          <li><a href="#s6">第三方服务</a></li>
+          <li><a href="#s7">数据删除</a></li>
+          <li><a href="#s8">未成年人</a></li>
+          <li><a href="#s9">政策变更</a></li>
+          <li><a href="#s10">联系我们</a></li>
+        </ol>
+      </div>
+
+      <p>本政策说明凭牌（Tessera，以下简称「本应用」）如何处理与你的信息相关的数据。本应用是一款开源软件，由个人开发者（以下简称「我们」）发布，你可以通过公开源码自行核验下列任何一条表述。</p>
+
+      <h2 id="s1">1. 概述</h2>
+      <ul>
+        <li>本应用<strong>没有账号体系</strong>，不需要注册或登录，也不要求提供任何个人信息。</li>
+        <li>本应用<strong>没有自建服务器</strong>，开发者不运营任何用于接收或存储你数据的后端。</li>
+        <li>本应用<strong>不接入</strong>统计分析、广告、用户画像或崩溃上报 SDK，不收集设备标识符、位置、通讯录、短信或应用列表。</li>
+      </ul>
+      <p>因此，我们既不收集、也不存储、也无法访问你在本应用中保存的任何验证码或密钥。</p>
+
+      <h2 id="s2">2. 我们收集哪些信息</h2>
+      <p>不收集任何个人信息。</p>
+      <p>本应用唯一的对外网络行为发生在：你主动使用云同步、你触发时间校准、以及你在设置第三方登录（Google / OneDrive）时。这些请求都直接发往<strong>你自己填写或选择的服务地址</strong>，不经过开发者的任何中间服务。</p>
+
+      <h2 id="s3">3. 数据存储在哪里</h2>
+      <ul>
+        <li><strong>验证码条目与密钥：</strong>保存在你设备的本地加密数据库中（SQLCipher）。数据库口令与每个条目的密钥由 Android Keystore 中的 AES-256-GCM 主密钥包裹，主密钥不出系统的安全硬件。</li>
+        <li><strong>应用设置：</strong>如外观、分类、锁定方式、同步后端配置等，保存在设备本地的应用私有存储中。</li>
+        <li><strong>登录令牌：</strong>Google / OneDrive 的 OAuth 令牌同样经 Keystore 主密钥加密后保存在本地，明文不落盘。</li>
+        <li><strong>本网站：</strong>是一个纯静态站点，不设置追踪 Cookie，不使用第三方分析脚本。</li>
+      </ul>
+      <p>上述本地数据只能由你在设备上访问。卸载本应用或清除其数据会一并删除它们。</p>
+
+      <h2 id="s4">4. 权限说明</h2>
+      <div class="table-scroll" style="margin:18px 0">
+        <table style="min-width:520px">
+          <thead><tr><th>权限</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td>相机 <code>CAMERA</code></td><td>扫描二维码以添加条目。相机画面仅在设备本地解码，不上传、不保存；不使用相机时不会访问它。</td></tr>
+            <tr><td>网络 <code>INTERNET</code> / <code>ACCESS_NETWORK_STATE</code></td><td>仅用于你启用云同步或时间校准时的网络请求，以及判断网络是否可用。</td></tr>
+            <tr><td>生物识别</td><td>用于应用锁。指纹 / 人脸数据由操作系统处理，本应用只接收「通过 / 未通过」的结果，无法读取、也不存储任何生物特征。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>本应用不申请存储、通讯录、位置、电话等与功能无关的权限。扫码除相机外还支持「选择图片」，该操作通过系统相册选择器完成，本应用只拿到你选中的那一张图片，无法遍历你的相册。</p>
+
+      <h2 id="s5">5. 云同步如何工作</h2>
+      <ul>
+        <li>云同步是<strong>可选功能</strong>，默认不会发生。只有你在设置中绑定后端并设置同步口令后才会启用。</li>
+        <li>同步内容在<strong>设备上加密后</strong>才发送：加密算法为 AES-256-GCM，密钥由你的同步口令经 PBKDF2 派生，与 PIN、Keystore 主密钥彼此独立。</li>
+        <li>云服务商只能看到<strong>密文</strong>与有限的文件元数据（文件名、大小、修改时间）。明文内容对服务商不可读，<strong>对开发者同样不可读</strong>。</li>
+        <li>同步口令只保存在你的设备上，<strong>不会</strong>随同步上传。<strong>我们无法帮你找回口令</strong>，口令遗失意味着云端备份无法解密。</li>
+        <li>出于最小权限原则，本应用访问 Google Drive 时只使用 <code>drive.appdata</code> 应用私有目录（在网页版 Drive 中不可见），访问 OneDrive 时只使用 <code>Files.ReadWrite.AppFolder</code> 应用专属文件夹，两者都无法访问你云端账号中的其它文件。</li>
+      </ul>
+
+      <h2 id="s6">6. 第三方服务</h2>
+      <p>当你选择使用某个云同步后端时，数据会传输给相应的服务提供商，其自身隐私政策将同时适用于该部分数据。这些服务商可能按行业惯例记录访问时间、IP 地址等技术信息：</p>
+      <ul>
+        <li>Google Drive —— <a href="https://policies.google.com/privacy" rel="noopener noreferrer">Google 隐私权政策</a></li>
+        <li>Microsoft OneDrive —— <a href="https://privacy.microsoft.com/privacystatement" rel="noopener noreferrer">Microsoft 隐私声明</a></li>
+        <li>GitHub（仓库 / Gist）—— <a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement" rel="noopener noreferrer">GitHub 隐私声明</a></li>
+        <li>Gitee、以及你自己搭建或购买的 WebDAV / S3 对象存储服务 —— 请参阅其各自的服务条款</li>
+      </ul>
+      <p>本应用内置了 Google ML Kit 的<strong>离线</strong>条码识别库用于扫码：识别在设备本地完成。若你的设备安装了 Google Play 服务，Google 可能依据其自身政策处理相关信息（例如服务的可用性诊断），这部分不受本应用控制。设备版 Google Play 服务、Google 账号授权同样适用 Google 的隐私政策。</p>
+
+      <h2 id="s7">7. 数据删除</h2>
+      <ul>
+        <li><strong>本地数据：</strong>卸载本应用，或在系统设置中「清除数据」，即会删除全部本地条目、密钥与设置。此操作不可恢复。</li>
+        <li><strong>云端备份：</strong>卸载应用<strong>不会</strong>删除你已同步到云端的备份文件。你可以在应用内「同步后端 → 云端数据」中删除指定后端的云端数据，也可以直接在对应的云盘 / 仓库中删除。</li>
+        <li><strong>回收站：</strong>本应用内的删除会先进入回收站（默认保留 30 天），可在回收站中还原或彻底删除。彻底删除后本机不再保留该条目。</li>
+      </ul>
+
+      <h2 id="s8">8. 未成年人</h2>
+      <p>本应用不是面向儿童设计的产品，我们不会有意收集儿童的个人信息。由于本应用本身不收集任何个人信息，这一点在实现上自然成立。</p>
+
+      <h2 id="s9">9. 政策变更</h2>
+      <p>本政策可能随功能调整而更新，更新后的版本将发布在本页面并注明生效日期；涉及重大变更时，我们会在项目仓库的发布说明中一并提示。由于本应用是开源项目，历史版本的政策文本同样可通过版本控制记录查阅。</p>
+
+      <h2 id="s10">10. 联系我们</h2>
+      <p>对本政策有任何疑问，或发现与隐私相关的实现问题，欢迎在项目仓库提交 Issue：</p>
+      <p><a href="https://github.com/akiker233/Tessera/issues" rel="noopener noreferrer">github.com/akiker233/Tessera/issues</a></p>
+      <p style="color:var(--muted);font-size:14.2px">如需其它联系方式，可通过上述仓库的维护者主页获取。</p>
+
+    </div>
+  </div>
+</main>
+</Base>
