@@ -85,8 +85,16 @@ interface AccountDao {
     @Query("SELECT * FROM accounts")
     suspend fun all(): List<AccountEntity>
 
-    @Query("UPDATE accounts SET sortOrder = :order WHERE id = :id")
-    suspend fun updateSortOrder(id: String, order: Int)
+    /** 已有排序的最大值；新条目追加到末尾时用。 */
+    @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM accounts")
+    suspend fun maxSortOrder(): Int
+
+    /**
+     * 手动排序：同时递增同步修订号，否则排序在其它设备上永远会被旧版本覆盖
+     * （同步合并按 syncRev / updatedAt 选整条记录）。
+     */
+    @Query("UPDATE accounts SET sortOrder = :order, updatedAt = :now, syncRev = syncRev + 1 WHERE id = :id")
+    suspend fun updateSortOrder(id: String, order: Int, now: Long = System.currentTimeMillis())
 }
 
 @Dao

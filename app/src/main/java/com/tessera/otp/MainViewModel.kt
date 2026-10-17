@@ -39,6 +39,8 @@ sealed interface Screen {
     data object SyncBackends : Screen
     data object Export : Screen
     data object Categories : Screen
+    /** 排序页：拖动调整分类文件夹与验证码的显示顺序。 */
+    data object Sort : Screen
     /** 关于页（版本、许可）。 */
     data object About : Screen
     /** 分类归类页：把账号多选归入 categoryId 指定的分类。 */
@@ -99,6 +101,16 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
     /** 分类（文件夹）管理 ViewModel（设置 → 数据 → 分类管理）。 */
     val categories: com.tessera.otp.feature.settings.CategoryManageViewModel by lazy {
         com.tessera.otp.feature.settings.CategoryManageViewModel(requireRepository())
+    }
+
+    /** 排序页 ViewModel（分类文件夹 + 验证码的显示顺序）。 */
+    val sort: com.tessera.otp.feature.settings.SortViewModel by lazy {
+        com.tessera.otp.feature.settings.SortViewModel(requireRepository())
+    }
+
+    /** 检查更新（关于页）；不依赖本地仓库，随时可用。 */
+    val update: com.tessera.otp.feature.settings.UpdateViewModel by lazy {
+        com.tessera.otp.feature.settings.UpdateViewModel()
     }
 
     /** 同步页 ViewModel；周期任务由 Activity 注入的 scheduler 注册。 */

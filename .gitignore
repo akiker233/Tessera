@@ -35,3 +35,6 @@ hs_err_pid*
 
 # Vendored third-party reference source (not part of Tessera)
 /2fas-android-6.0.3
+
+# Website: KV 批量数据等生成产物
+/website/dist

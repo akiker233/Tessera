@@ -143,6 +143,13 @@ data class AppSettings(
     val listDensity: String = ListDensity.DEFAULT.name,
     val syncIntervalMinutes: Long = SyncInterval.OFF.minutes,
     val syncIntervalName: String = SyncInterval.OFF.name,
+    /** 首页已收起的分组 key（分类 id，或「未分类」的固定 key）：重启后保持原状。 */
+    val collapsedGroups: Set<String> = emptySet(),
+    /**
+     * 首页「未分类」分组的位置锚点：null = 从未拖过（固定最后）、"" = 排最前，
+     * 其余值 = 某个分类 id，表示紧跟在该分类之后。空分类也参与定位。
+     */
+    val ungroupedGroupAnchor: String? = null,
     /**
      * 不参与同步的「已绑定后端」键集合。
      *
@@ -223,6 +230,8 @@ class SettingsRepository(private val context: Context) {
         val LIST_DENSITY = stringPreferencesKey("list_density")
         val SYNC_INTERVAL_MINUTES = longPreferencesKey("sync_interval_minutes")
         val SYNC_INTERVAL_NAME = stringPreferencesKey("sync_interval_name")
+        val COLLAPSED_GROUPS = stringSetPreferencesKey("collapsed_groups")
+        val UNGROUPED_GROUP_ANCHOR = stringPreferencesKey("ungrouped_group_anchor")
         /** 旧版「当前选中的后端」；仅用于把老配置派生迁移成 [Keys.DISABLED_PROVIDERS]。 */
         val LEGACY_SYNC_PROVIDER = stringPreferencesKey("sync_provider")
         /** 旧版「同时同步」勾选集合；用途同上，不再写入。 */
@@ -273,6 +282,8 @@ class SettingsRepository(private val context: Context) {
             listDensity = p[Keys.LIST_DENSITY] ?: ListDensity.DEFAULT.name,
             syncIntervalMinutes = p[Keys.SYNC_INTERVAL_MINUTES] ?: SyncInterval.OFF.minutes,
             syncIntervalName = p[Keys.SYNC_INTERVAL_NAME] ?: SyncInterval.OFF.name,
+            collapsedGroups = p[Keys.COLLAPSED_GROUPS].orEmpty(),
+            ungroupedGroupAnchor = p[Keys.UNGROUPED_GROUP_ANCHOR],
             disabledProviders = readDisabledProviders(p),
             syncEnabled = p[Keys.SYNC_ENABLED] ?: true,
             lastSyncAt = p[Keys.LAST_SYNC_AT] ?: 0L,
@@ -316,6 +327,10 @@ class SettingsRepository(private val context: Context) {
         it[Keys.SYNC_INTERVAL_MINUTES] = interval.minutes
         it[Keys.SYNC_INTERVAL_NAME] = interval.name
     }
+    /** 保存首页各分组的展开/收起状态（整集合覆盖写入）。 */
+    suspend fun setCollapsedGroups(keys: Set<String>) = edit { it[Keys.COLLAPSED_GROUPS] = keys }
+    /** 记录首页「未分类」分组的锚点（空串 = 最前，其余为紧邻其前的分类 id）。 */
+    suspend fun setUngroupedGroupAnchor(anchor: String) = edit { it[Keys.UNGROUPED_GROUP_ANCHOR] = anchor }
     /** 记录不参与同步的后端键；一旦写入即成为唯一事实来源，不再回退到旧字段派生。 */
     suspend fun setDisabledProviders(names: Set<String>) = edit { it[Keys.DISABLED_PROVIDERS] = names }
     suspend fun setSyncEnabled(value: Boolean) = edit { it[Keys.SYNC_ENABLED] = value }

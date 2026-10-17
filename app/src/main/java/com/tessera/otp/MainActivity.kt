@@ -90,6 +90,7 @@ import com.tessera.otp.feature.settings.SettingsSubRoute
 import com.tessera.otp.feature.settings.AboutScreen
 import com.tessera.otp.feature.settings.CategoryManageScreen
 import com.tessera.otp.feature.settings.CategoryAssignScreen
+import com.tessera.otp.feature.settings.SortScreen
 import com.tessera.otp.feature.sync.SyncUiState
 import com.tessera.otp.feature.trash.TrashScreen
 import com.tessera.otp.ui.lock.LockScreen
@@ -411,6 +412,7 @@ private fun AppShell(
         onListDensity = model::setListDensity,
         onOpenExport = { model.navigate(Screen.Export) },
         onOpenCategories = { model.navigate(Screen.Categories) },
+        onOpenSort = { model.navigate(Screen.Sort) },
         onOpenAbout = { model.navigate(Screen.About) },
         onSyncNetworkTime = model::syncNetworkTime
     )
@@ -452,11 +454,14 @@ private fun AppShell(
                     onQueryChange = model.home::setQuery,
                     onCategorySelected = model.home::selectCategory,
                     onToggleVisibility = model.home::toggleVisibility,
+                    onOpenSort = { model.navigate(Screen.Sort) },
                     onItemClick = { item -> model.openEdit(item.id) },
                     onMoveToTrash = model.home::moveToTrash,
                     syncing = homeSyncState.running,
                     syncStatus = homeSyncState.lastStatus,
                     onRefresh = model.sync::runManualSync,
+                    onToggleGroupCollapsed = model.home::toggleGroupCollapsed,
+                    onReorderGroups = model.home::commitGroupOrder,
                     density = runCatching { ListDensity.valueOf(settings?.listDensity ?: ListDensity.DEFAULT.name) }.getOrDefault(ListDensity.DEFAULT)
                 )
 
@@ -490,7 +495,15 @@ private fun AppShell(
                     )
                 }
 
-                is Screen.About -> AboutScreen(onBack = model::back)
+                is Screen.About -> {
+                    val updateState by model.update.state.collectAsStateWithLifecycle()
+                    AboutScreen(
+                        updateState = updateState,
+                        onCheckUpdate = model.update::check,
+                        onDismissUpdate = model.update::dismiss,
+                        onBack = model::back
+                    )
+                }
 
                 is Screen.IconPicker -> IconPickerScreen(
                     icons = container.icons,
@@ -570,6 +583,16 @@ private fun AppShell(
                     )
                 }
                 is Screen.Export -> ExportRoute(model = model, onBack = model::back)
+
+                is Screen.Sort -> {
+                    val sortState by model.sort.state.collectAsStateWithLifecycle()
+                    SortScreen(
+                        state = sortState,
+                        onCommitCategories = model.sort::commitCategories,
+                        onCommitAccounts = model.sort::commitAccounts,
+                        onBack = model::back
+                    )
+                }
 
                 is Screen.Categories -> {
                     val categoryState by model.categories.state.collectAsStateWithLifecycle()

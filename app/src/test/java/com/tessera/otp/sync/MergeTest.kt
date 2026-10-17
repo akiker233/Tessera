@@ -6,8 +6,17 @@ import org.junit.Test
 /** 合并规则测试：覆盖新增、双方修改、墓碑删除与稳定性。 */
 class MergeTest {
 
-    private fun entry(id: String, rev: Long, updatedAt: Long, deletedAt: Long? = null) =
-        VaultEntry(id = id, issuer = "issuer", accountName = "acct", secretBase32 = "cipher", syncRev = rev, updatedAt = updatedAt, deletedAt = deletedAt)
+    private fun entry(id: String, rev: Long, updatedAt: Long, deletedAt: Long? = null, sortOrder: Int = 0) =
+        VaultEntry(
+            id = id,
+            issuer = "issuer",
+            accountName = "acct",
+            secretBase32 = "cipher",
+            sortOrder = sortOrder,
+            syncRev = rev,
+            updatedAt = updatedAt,
+            deletedAt = deletedAt
+        )
 
     @Test
     fun `仅单侧存在的条目会被收录`() {
@@ -43,6 +52,14 @@ class MergeTest {
         val result = Merge.merge(local, remote)
         assertEquals(1, result.localWins)
         assertEquals(0, result.remoteWins)
+    }
+
+    @Test
+    fun `排序变更随修订号同步`() {
+        // 本机拖动排序会递增 syncRev，远端旧顺序不能把新位置顶回去
+        val local = listOf(entry("a", 1, 100, sortOrder = 0))
+        val remote = listOf(entry("a", 2, 200, sortOrder = 5))
+        assertEquals(5, Merge.merge(local, remote).merged.single().sortOrder)
     }
 
     @Test

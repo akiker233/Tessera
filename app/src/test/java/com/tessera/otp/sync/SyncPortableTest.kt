@@ -71,13 +71,26 @@ class SyncPortableTest {
     }
 
     @Test
-    fun `整包用同一口令能往返解出明文密钥`() {
-        val entity = AccountEntity(id = "a", issuer = "issuer", accountName = "acct")
+    fun `整包用同一口令能往返解出明文密钥与排序`() {
+        val entity = AccountEntity(id = "a", issuer = "issuer", accountName = "acct", sortOrder = 7)
         val payload = SyncCodec.encode(SyncCodec.toSnapshot(listOf(entity to secret), now = 123L), "horse-battery")
         val snapshot = SyncCodec.decode(payload, "horse-battery")
         assertEquals(SyncCodec.CURRENT_VERSION, snapshot.version)
         assertEquals(123L, snapshot.updatedAt)
         assertEquals(Base32.encode(secret), snapshot.entries.single().secretBase32)
+        // 手动排序必须跟着同步包走，否则换机后顺序会退化
+        assertEquals(7, snapshot.entries.single().sortOrder)
+        assertEquals(7, snapshot.entries.single().toEntityAndSecret()!!.first.sortOrder)
+    }
+
+    @Test
+    fun `旧包缺少排序字段时默认为 0`() {
+        val player = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val decoded = player.decodeFromString(
+            VaultSnapshot.serializer(),
+            """{"app":"tessera","version":3,"entries":[{"id":"a","secret":"JBSWY3DPEHPK3PXP"}]}"""
+        )
+        assertEquals(0, decoded.entries.single().sortOrder)
     }
 
     @Test

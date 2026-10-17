@@ -9,10 +9,12 @@ import com.tessera.otp.data.keystore.SecretCipher
 import com.tessera.otp.domain.OtpAlgorithm
 import com.tessera.otp.domain.OtpSpec
 import com.tessera.otp.domain.TotpEngine
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import java.util.UUID
 
@@ -94,11 +96,15 @@ class AccountRepository(
         }
     }
 
-    fun observeActive(): Flow<List<Account>> = accountDao.observeActive().map { list -> list.map(::decrypt) }
+    // 每条密钥都要走 Keystore 解密，属于阻塞 IPC；放到 IO，避免列表查询回流时卡住主线程
+    fun observeActive(): Flow<List<Account>> =
+        accountDao.observeActive().map { list -> list.map(::decrypt) }.flowOn(Dispatchers.IO)
 
-    fun search(query: String): Flow<List<Account>> = accountDao.search(query).map { list -> list.map(::decrypt) }
+    fun search(query: String): Flow<List<Account>> =
+        accountDao.search(query).map { list -> list.map(::decrypt) }.flowOn(Dispatchers.IO)
 
-    fun observeTrash(): Flow<List<Account>> = accountDao.observeTrash().map { list -> list.map(::decrypt) }
+    fun observeTrash(): Flow<List<Account>> =
+        accountDao.observeTrash().map { list -> list.map(::decrypt) }.flowOn(Dispatchers.IO)
 
     fun observeCategories(): Flow<List<CategoryEntity>> = categoryDao.observeAll()
 
@@ -111,8 +117,11 @@ class AccountRepository(
     /** 新增/更新：自动加密密钥并递增同步修订号。 */
     suspend fun upsert(account: AccountEntity, plainSecret: ByteArray) {
         val now = System.currentTimeMillis()
+        // 编辑表单不携带排序信息：已有条目保留原位置，新条目追加到列表末尾
+        val sortOrder = accountDao.byId(account.id)?.sortOrder ?: (accountDao.maxSortOrder() + 1)
         val entity = account.copy(
             secretEnc = cipher.encrypt(plainSecret),
+            sortOrder = sortOrder,
             updatedAt = now,
             syncRev = account.syncRev + 1
         )
@@ -120,19 +129,43 @@ class AccountRepository(
         notifyLocalChange()
     }
 
+    /** 批量新增（导入/扫码）：已有条目保留原排序，新条目依次追加到末尾。 */
     suspend fun upsertAll(entities: List<Pair<AccountEntity, ByteArray>>) {
+        if (entities.isEmpty()) return
         val now = System.currentTimeMillis()
+        val existingOrders = accountDao.all().associate { it.id to it.sortOrder }
+        var nextOrder = (existingOrders.values.maxOrNull() ?: -1) + 1
         accountDao.upsertAll(
             entities.map { pair ->
                 val entity = pair.first
                 entity.copy(
                     secretEnc = cipher.encrypt(pair.second),
+                    sortOrder = existingOrders[entity.id] ?: nextOrder++,
                     updatedAt = if (entity.updatedAt == 0L) now else entity.updatedAt,
                     syncRev = entity.syncRev + 1
                 )
             }
         )
         notifyLocalChange()
+    }
+
+    /**
+     * 按传入的 id 顺序重排账号：sortOrder 依次写为 0,1,2…
+     *
+     * 只写顺序发生变化的条目；每条都会递增 syncRev/updatedAt，让新顺序能同步出去。
+     */
+    suspend fun reorderAccounts(orderedIds: List<String>) {
+        if (orderedIds.isEmpty()) return
+        val current = accountDao.active().associateBy { it.id }
+        var changed = false
+        orderedIds.forEachIndexed { index, id ->
+            val entity = current[id] ?: return@forEachIndexed
+            if (entity.sortOrder != index) {
+                accountDao.updateSortOrder(id, index)
+                changed = true
+            }
+        }
+        if (changed) notifyLocalChange()
     }
 
     suspend fun moveToTrash(id: String) {
@@ -185,11 +218,15 @@ class AccountRepository(
 
     /** 按传入顺序重排：sortOrder 依次写为 0,1,2…（observeAll 正是按 sortOrder 排序）。 */
     suspend fun reorderCategories(ordered: List<CategoryEntity>) {
+        var changed = false
         ordered.forEachIndexed { index, category ->
             if (category.sortOrder != index) {
                 categoryDao.upsert(category.copy(sortOrder = index, updatedAt = System.currentTimeMillis()))
+                changed = true
             }
         }
+        // 分类合并按 updatedAt 判定，顺序变化同样需要触发一次静默同步
+        if (changed) notifyLocalChange()
     }
 
     /** 删除分类：先把该分类下的条目（含回收站）改回未分类，再写墓碑（软删除）。 */

@@ -1,5 +1,6 @@
 package com.tessera.otp.feature.settings
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -29,7 +30,9 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -85,6 +88,7 @@ data class SettingsActions(
     val onListDensity: (ListDensity) -> Unit,
     val onOpenExport: () -> Unit,
     val onOpenCategories: () -> Unit,
+    val onOpenSort: () -> Unit,
     val onOpenAbout: () -> Unit,
     val onSyncNetworkTime: () -> Unit
 )
@@ -169,9 +173,18 @@ fun SettingsScreen(
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             ChoiceRow(
                 title = "分类管理",
-                subtitle = "新建 / 重命名 / 改色 / 删除 / 排序 · 选择账号归类（首页可按分类分组查看）",
+                subtitle = "新建 / 重命名 / 改色 / 删除 · 选择账号归类（首页可按分类分组查看）",
                 icon = Icons.Filled.Category,
                 onClick = actions.onOpenCategories
+            )
+        }
+
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            ChoiceRow(
+                title = "排序",
+                subtitle = "拖动调整分类文件夹与验证码的显示顺序",
+                icon = Icons.Filled.SwapVert,
+                onClick = actions.onOpenSort
             )
         }
 
@@ -204,9 +217,14 @@ fun SettingsSubRoute(
     }
 }
 
-/** 关于页：版本、开源许可与项目地址。 */
+/** 关于页：版本、检查更新、开源许可与项目地址。 */
 @Composable
-fun AboutScreen(onBack: () -> Unit) {
+fun AboutScreen(
+    updateState: UpdateUiState,
+    onCheckUpdate: () -> Unit,
+    onDismissUpdate: () -> Unit,
+    onBack: () -> Unit
+) {
     val context = LocalContext.current
 
     SettingsPage("关于", onBack) {
@@ -233,6 +251,21 @@ fun AboutScreen(onBack: () -> Unit) {
         }
 
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            ChoiceRow(
+                title = "检查更新",
+                subtitle = when (val dialog = updateState.dialog) {
+                    is UpdateDialogState.Available -> "发现新版本 " + dialog.info.latestVersion
+                    is UpdateDialogState.UpToDate -> "已是最新版本"
+                    is UpdateDialogState.Failed -> "检查失败，点按重试"
+                    null -> if (updateState.checking) "正在检查…"
+                    else "当前版本 " + BuildConfig.VERSION_NAME + " · 从 GitHub 获取最新版本"
+                },
+                icon = Icons.Filled.Refresh,
+                onClick = onCheckUpdate
+            )
+        }
+
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Column {
                 InfoRow(title = "版本", value = BuildConfig.VERSION_NAME + "（build " + BuildConfig.VERSION_CODE + "）")
                 HorizontalDivider()
@@ -242,11 +275,7 @@ fun AboutScreen(onBack: () -> Unit) {
                     title = "项目主页",
                     subtitle = REPO_URL.removePrefix("https://"),
                     icon = Icons.Filled.Public,
-                    onClick = {
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(REPO_URL)))
-                        }
-                    }
+                    onClick = { openHttps(context, REPO_URL) }
                 )
             }
         }
@@ -263,9 +292,67 @@ fun AboutScreen(onBack: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
+
+    when (val dialog = updateState.dialog) {
+        is UpdateDialogState.Available -> AlertDialog(
+            onDismissRequest = onDismissUpdate,
+            title = { Text("发现新版本 " + dialog.info.latestVersion) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("当前版本 " + BuildConfig.VERSION_NAME + "，可更新到 " + dialog.info.latestVersion + "。")
+                    if (dialog.info.notes.isNotBlank()) {
+                        val notes = dialog.info.notes.trim()
+                        Text(
+                            text = notes.take(1200) + if (notes.length > 1200) "…" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDismissUpdate()
+                    openHttps(context, dialog.info.downloadUrl ?: dialog.info.releaseUrl)
+                }) {
+                    Text(if (dialog.info.downloadUrl != null) "下载更新" else "前往下载")
+                }
+            },
+            dismissButton = { TextButton(onClick = onDismissUpdate) { Text("稍后") } }
+        )
+
+        is UpdateDialogState.UpToDate -> AlertDialog(
+            onDismissRequest = onDismissUpdate,
+            title = { Text("已是最新版本") },
+            text = { Text("当前版本 " + dialog.currentVersion + " 已是最新。") },
+            confirmButton = { TextButton(onClick = onDismissUpdate) { Text("好") } }
+        )
+
+        is UpdateDialogState.Failed -> AlertDialog(
+            onDismissRequest = onDismissUpdate,
+            title = { Text("检查更新失败") },
+            text = { Text(dialog.message) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDismissUpdate()
+                    onCheckUpdate()
+                }) { Text("重试") }
+            },
+            dismissButton = { TextButton(onClick = onDismissUpdate) { Text("取消") } }
+        )
+
+        null -> Unit
+    }
 }
 
 private const val REPO_URL = "https://github.com/akiker233/Tessera"
+
+/** 只允许打开 HTTPS 链接：下载地址来自外部 API，避免被引导到自定义 scheme。 */
+private fun openHttps(context: Context, url: String) {
+    val uri = Uri.parse(url)
+    if (uri.scheme != "https") return
+    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+}
 
 /**
  * 应用图标。启动图标是自适应图标（XML 图层），Compose 的 painterResource 只能加载矢量/位图资源，

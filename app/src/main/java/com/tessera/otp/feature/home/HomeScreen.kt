@@ -1,5 +1,6 @@
 package com.tessera.otp.feature.home
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
@@ -14,6 +15,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,14 +25,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -38,6 +44,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AssistChip
@@ -66,15 +73,25 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
@@ -83,6 +100,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import android.widget.Toast
@@ -91,6 +109,8 @@ import com.tessera.otp.data.icon.IconRepository
 import com.tessera.otp.data.prefs.ListDensity
 import com.tessera.otp.ui.LetterAvatar
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -100,6 +120,8 @@ fun HomeScreen(
     onQueryChange: (String) -> Unit,
     onCategorySelected: (String?) -> Unit,
     onToggleVisibility: () -> Unit,
+    /** 打开排序页（拖动调整分类与验证码顺序）。 */
+    onOpenSort: () -> Unit = {},
     onItemClick: (HomeItem) -> Unit,
     onMoveToTrash: (String) -> Unit,
     /** 是否正在手动同步：驱动下拉刷新的转圈指示器。 */
@@ -108,10 +130,17 @@ fun HomeScreen(
     syncStatus: String = "",
     /** 下拉到阈值后触发一次手动同步。 */
     onRefresh: () -> Unit = {},
+    /** 切换分组展开/收起（状态由设置持久化，重启后保持）。 */
+    onToggleGroupCollapsed: (String) -> Unit = {},
+    /** 首页拖动文件夹后提交新的分组顺序（含「未分类」）。 */
+    onReorderGroups: (List<String>) -> Unit = {},
     density: ListDensity = ListDensity.DEFAULT,
     contentPadding: androidx.compose.foundation.layout.PaddingValues = androidx.compose.foundation.layout.PaddingValues(0.dp)
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
     var menuItemId by remember { mutableStateOf<String?>(null) }
     // 只有「用户下拉触发」的同步才显示指示器、弹结果提示；
     // 冷启动与后台（账号改动 / 周期任务）触发的同步必须完全静默。
@@ -122,8 +151,43 @@ fun HomeScreen(
     var indicatorShownAt by remember { mutableStateOf(0L) }
     // 下拉那一瞬间 running 还没翻成 true，不能据此就认定「同步已结束」
     var sawRunning by remember { mutableStateOf(false) }
-    // 首页按分类分组时的收起状态（默认全部展开，只记录被收起的组 key）
-    var collapsedGroups by remember { mutableStateOf(setOf<String>()) }
+    // 分组展开/收起状态改为持久化在设置里，重启后保持（见 state.collapsedGroupKeys）。
+    // 首页分组拖动排序：拖动期间只改本地顺序，松手才写库。
+    var draggingGroupKey by remember { mutableStateOf<String?>(null) }
+    var dragStartBase by remember { mutableFloatStateOf(0f) }
+    var dragTotal by remember { mutableFloatStateOf(0f) }
+    var dragTranslation by remember { mutableFloatStateOf(0f) }
+    var autoScrolling by remember { mutableStateOf(false) }
+    /** 拖动期间的分组顺序（null 表示跟随数据库顺序）。 */
+    var groupOrder by remember { mutableStateOf<List<String>?>(null) }
+    // 搜索默认收起为左上角按钮：点开后在顶栏展开并自动聚焦；返回键先收起搜索，
+    // 而不是直接退出首页。收起时清空关键词，避免出现「列表被过滤但看不到搜索框」。
+    var searchExpanded by rememberSaveable { mutableStateOf(false) }
+    var focusOnExpand by remember { mutableStateOf(false) }
+    val searchFocusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+
+    fun collapseSearch() {
+        searchExpanded = false
+        focusOnExpand = false
+        onQueryChange("")
+        keyboard?.hide()
+        focusManager.clearFocus()
+    }
+
+    LaunchedEffect(searchExpanded, focusOnExpand) {
+        if (searchExpanded && focusOnExpand) {
+            // 等输入框完成本帧布局再请求焦点，否则部分机型不会弹键盘
+            withFrameNanos { }
+            runCatching { searchFocusRequester.requestFocus() }
+            keyboard?.show()
+            focusOnExpand = false
+        }
+    }
+
+    BackHandler(enabled = searchExpanded) { collapseSearch() }
+
     val latestStatus by rememberUpdatedState(syncStatus)
     LaunchedEffect(pulled, syncing) {
         if (!pulled) return@LaunchedEffect
@@ -152,13 +216,55 @@ fun HomeScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("验证码") },
-                actions = {
-                    IconButton(onClick = onToggleVisibility) {
-                        Icon(
-                            imageVector = if (state.flags.codesVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
-                            contentDescription = if (state.flags.codesVisible) "隐藏验证码" else "显示验证码"
+                navigationIcon = {
+                    if (searchExpanded) {
+                        IconButton(onClick = { collapseSearch() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "收起搜索")
+                        }
+                    }
+                },
+                title = {
+                    if (searchExpanded) {
+                        OutlinedTextField(
+                            value = state.query,
+                            onValueChange = onQueryChange,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .focusRequester(searchFocusRequester),
+                            placeholder = { Text("搜索服务或账号", style = MaterialTheme.typography.bodyMedium) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(24.dp),
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                            trailingIcon = {
+                                if (state.query.isNotEmpty()) {
+                                    IconButton(onClick = { onQueryChange("") }) {
+                                        Icon(Icons.Filled.Clear, contentDescription = "清除搜索")
+                                    }
+                                }
+                            }
                         )
+                    } else {
+                        Text("验证码")
+                    }
+                },
+                actions = {
+                    if (!searchExpanded) {
+                        IconButton(onClick = {
+                            focusOnExpand = true
+                            searchExpanded = true
+                        }) {
+                            Icon(Icons.Filled.Search, contentDescription = "搜索")
+                        }
+                        IconButton(onClick = onOpenSort) {
+                            Icon(Icons.Filled.SwapVert, contentDescription = "排序")
+                        }
+                        IconButton(onClick = onToggleVisibility) {
+                            Icon(
+                                imageVector = if (state.flags.codesVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                contentDescription = if (state.flags.codesVisible) "隐藏验证码" else "显示验证码"
+                            )
+                        }
                     }
                 }
             )
@@ -169,30 +275,11 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            OutlinedTextField(
-                value = state.query,
-                onValueChange = onQueryChange,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (state.query.isNotEmpty()) {
-                        IconButton(onClick = { onQueryChange("") }) {
-                            Icon(Icons.Filled.Clear, contentDescription = "清除搜索")
-                        }
-                    }
-                },
-                placeholder = { Text("搜索服务或账号") },
-                singleLine = true,
-                shape = RoundedCornerShape(14.dp)
-            )
-
             if (state.categories.isNotEmpty()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -254,12 +341,81 @@ fun HomeScreen(
                     }
                 } else {
                     // 「全部」且未搜索时按分类折叠分组；选中某分类或搜索时为平铺结果
-                    val groups = if (state.selectedCategoryId == null && state.query.isBlank()) {
-                        buildCategoryGroups(state.items, state.categories)
+                    val baseGroups = if (state.selectedCategoryId == null && state.query.isBlank()) {
+                        // 分类跟随 sortOrder，「未分类」按持久化锚点插回其中
+                        orderHomeGroups(
+                            buildCategoryGroups(state.items, state.categories),
+                            state.categories.map { it.id },
+                            state.ungroupedGroupAnchor
+                        )
                     } else {
                         emptyList()
                     }
+                    // 拖动期间用本地顺序，其余时间跟随数据库
+                    val groups = applyGroupOrder(baseGroups, groupOrder)
+
+                    fun headerKey(groupKey: String) = GROUP_ITEM_PREFIX + groupKey
+
+                    fun startGroupDrag(groupKey: String) {
+                        val info = listState.layoutInfo.visibleItemsInfo
+                            .firstOrNull { it.key == headerKey(groupKey) } ?: return
+                        draggingGroupKey = groupKey
+                        dragStartBase = info.offset.toFloat()
+                        dragTotal = 0f
+                        dragTranslation = 0f
+                        groupOrder = groups.map { it.key }
+                    }
+
+                    fun finishGroupDrag(groupKey: String) {
+                        if (draggingGroupKey != groupKey) return
+                        draggingGroupKey = null
+                        dragTranslation = 0f
+                        dragTotal = 0f
+                        val order = groupOrder ?: return
+                        val currentIds = state.categories.map { it.id }
+                        val merged = mergeCategoryOrder(currentIds, order)
+                        // 锚点为 null 等价于「排在最后一个分类之后」，避免没改变位置也写一次设置
+                        val currentAnchor = state.ungroupedGroupAnchor ?: currentIds.lastOrNull().orEmpty()
+                        val anchorChanged = UNGROUPED_KEY in order && ungroupedAnchorOf(order) != currentAnchor
+                        if (merged != currentIds || anchorChanged) {
+                            // 先保留本地顺序，等新顺序从数据库/设置回流后再清掉，避免闪回旧位置
+                            onReorderGroups(order)
+                        } else {
+                            groupOrder = null
+                        }
+                    }
+
+                    fun swapGroups(draggedKey: String, targetKey: String): Boolean {
+                        val order = groupOrder ?: return false
+                        val from = order.indexOf(draggedKey)
+                        val to = order.indexOf(targetKey)
+                        if (from < 0 || to < 0 || from == to) return false
+                        groupOrder = order.toMutableList().apply { add(to, removeAt(from)) }
+                        return true
+                    }
+
+                    // 松手落库后，分类顺序与「未分类」锚点都回到与本地一致时释放本地顺序
+                    LaunchedEffect(state.categories, state.ungroupedGroupAnchor, draggingGroupKey) {
+                        if (draggingGroupKey != null) return@LaunchedEffect
+                        val order = groupOrder ?: return@LaunchedEffect
+                        val currentIds = state.categories.map { it.id }
+                        val currentAnchor = state.ungroupedGroupAnchor ?: currentIds.lastOrNull().orEmpty()
+                        val anchorMatches = UNGROUPED_KEY !in order || ungroupedAnchorOf(order) == currentAnchor
+                        if (mergeCategoryOrder(currentIds, order) == currentIds && anchorMatches) groupOrder = null
+                    }
+
+                    // 换位会改变被拖行的基准位置，等新布局落定后按原始位移重算，避免跳动
+                    LaunchedEffect(groupOrder, draggingGroupKey) {
+                        val key = draggingGroupKey ?: return@LaunchedEffect
+                        withFrameNanos { }
+                        withFrameNanos { }
+                        val info = listState.layoutInfo.visibleItemsInfo
+                            .firstOrNull { it.key == headerKey(key) } ?: return@LaunchedEffect
+                        dragTranslation = dragStartBase + dragTotal - info.offset
+                    }
+
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(
                             start = 16.dp, end = 16.dp, top = 8.dp, bottom = contentPadding.calculateBottomPadding() + 24.dp
@@ -282,15 +438,92 @@ fun HomeScreen(
                             }
                         } else {
                             groups.forEach { group ->
-                                val collapsed = group.key in collapsedGroups
-                                item(key = "group:" + group.key) {
+                                val dragging = draggingGroupKey == group.key
+                                // 拖动中的文件夹临时按收起态显示，只让标题行跟着手指走
+                                val collapsed = group.key in state.collapsedGroupKeys || dragging
+                                item(key = headerKey(group.key)) {
                                     GroupHeader(
                                         group = group,
                                         collapsed = collapsed,
-                                        onToggle = {
-                                            collapsedGroups =
-                                                if (collapsed) collapsedGroups - group.key else collapsedGroups + group.key
-                                        }
+                                        dragging = dragging,
+                                        onToggle = { onToggleGroupCollapsed(group.key) },
+                                        modifier = Modifier
+                                            .then(if (dragging) Modifier.zIndex(1f) else Modifier.animateItem())
+                                            .graphicsLayer {
+                                                if (dragging) translationY = dragTranslation
+                                            }
+                                            .pointerInput(group.key) {
+                                                detectDragGesturesAfterLongPress(
+                                                    onDragStart = {
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        startGroupDrag(group.key)
+                                                    },
+                                                    onDrag = { change, dragAmount ->
+                                                        if (draggingGroupKey != group.key) {
+                                                            return@detectDragGesturesAfterLongPress
+                                                        }
+                                                        change.consume()
+                                                        dragTotal += dragAmount.y
+                                                        val layout = listState.layoutInfo
+                                                        val info = layout.visibleItemsInfo
+                                                            .firstOrNull { it.key == headerKey(group.key) }
+                                                            ?: return@detectDragGesturesAfterLongPress
+                                                        // 用「起始基准 + 累计位移 - 当前基准」自校正，
+                                                        // 换位或滚动导致基准变化时不会被甩出去
+                                                        dragTranslation = dragStartBase + dragTotal - info.offset
+
+                                                        val draggedCenter =
+                                                            info.offset + info.size / 2f + dragTranslation
+                                                        val candidate = layout.visibleItemsInfo
+                                                            .asSequence()
+                                                            .filter { item ->
+                                                                val key = item.key as? String ?: return@filter false
+                                                                key.startsWith(GROUP_ITEM_PREFIX) &&
+                                                                    key != headerKey(group.key)
+                                                            }
+                                                            .minByOrNull {
+                                                                abs(it.offset + it.size / 2f - draggedCenter)
+                                                            }
+                                                        if (candidate != null) {
+                                                            val targetCenter = candidate.offset + candidate.size / 2f
+                                                            // 中心过半才换位，避免轻微抖动就排序
+                                                            if (abs(targetCenter - draggedCenter) <
+                                                                (info.size + candidate.size) / 4f
+                                                            ) {
+                                                                swapGroups(
+                                                                    group.key,
+                                                                    (candidate.key as String).removePrefix(GROUP_ITEM_PREFIX)
+                                                                )
+                                                            }
+                                                        }
+
+                                                        // 拖到视口边缘自动滚动，长列表末尾也能拖过去
+                                                        val edge = 64.dp.toPx()
+                                                        val visualTop = info.offset + dragTranslation
+                                                        val visualBottom = visualTop + info.size
+                                                        val scrollDelta = when {
+                                                            visualBottom > layout.viewportEndOffset - edge ->
+                                                                visualBottom - (layout.viewportEndOffset - edge)
+                                                            visualTop < layout.viewportStartOffset + edge ->
+                                                                visualTop - (layout.viewportStartOffset + edge)
+                                                            else -> 0f
+                                                        }
+                                                        if (scrollDelta != 0f && !autoScrolling) {
+                                                            autoScrolling = true
+                                                            scope.launch {
+                                                                try {
+                                                                    dragTotal += listState
+                                                                        .scrollBy(scrollDelta.coerceIn(-edge, edge))
+                                                                } finally {
+                                                                    autoScrolling = false
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    onDragEnd = { finishGroupDrag(group.key) },
+                                                    onDragCancel = { finishGroupDrag(group.key) }
+                                                )
+                                            }
                                     )
                                 }
                                 if (!collapsed) {
@@ -455,18 +688,18 @@ private fun AccountRow(
 
             // 右侧圆环倒计时：环内显示剩余秒数，进度按剩余比例收缩
             if (!item.isHotp && !item.secretBroken) {
-                // 圆环进度用帧同步时钟（withFrameNanos）驱动，按**墙钟**计算剩余比例，
-                // 与 TOTP 时间窗/上方秒数保持一致；状态只在绘制阶段读取，不触发整行重组。
+                // 圆环进度按**墙钟**计算，与 TOTP 时间窗/上方秒数保持一致；状态只在绘制阶段读取，不触发整行重组。
+                // 按 20Hz 刷新而不是逐帧：38dp 的圆每秒只转 12°，50ms 的步进肉眼不可见；
+                // 逐帧刷新会让整页持续 60fps 重绘，切换分类时没有余量，反而更卡。
                 val ringProgress = remember { mutableFloatStateOf(1f) }
                 LaunchedEffect(item.id, item.period) {
                     val periodMs = item.period * 1000L
                     while (true) {
-                        withFrameNanos {
-                            // 与出码使用同一个时钟（网络校准后），保证环与验证码同步
-                            val nowMs = com.tessera.otp.data.time.NetworkTime.nowMillis()
-                            val elapsed = nowMs % periodMs
-                            ringProgress.floatValue = 1f - elapsed.toFloat() / periodMs.toFloat()
-                        }
+                        // 与出码使用同一个时钟（网络校准后），保证环与验证码同步
+                        val nowMs = com.tessera.otp.data.time.NetworkTime.nowMillis()
+                        val elapsed = nowMs % periodMs
+                        ringProgress.floatValue = 1f - elapsed.toFloat() / periodMs.toFloat()
+                        delay(50L)
                     }
                 }
                 Spacer(Modifier.width(8.dp))
@@ -491,7 +724,7 @@ private fun AccountRow(
 }
 
 /** 首页分组：一个分类（或「未分类」）对应的条目集合。 */
-private data class HomeGroup(
+internal data class HomeGroup(
     val key: String,
     val name: String,
     val colorArgb: Int?,
@@ -499,10 +732,14 @@ private data class HomeGroup(
 )
 
 /** 「未分类」分组的固定 key。 */
-private const val UNGROUPED_KEY = "ungrouped"
+internal const val UNGROUPED_KEY = "ungrouped"
+
+/** 分组标题在 LazyColumn 里的 key 前缀。 */
+private const val GROUP_ITEM_PREFIX = "group:"
 
 /**
- * 把条目按分类归组，顺序跟随分类自身的排序，未分类（含指向已删除分类的孤儿条目）放最后。
+ * 把条目按分类归组，顺序跟随分类自身的排序，未分类（含指向已删除分类的孤儿条目）先放最后，
+ * 随后由 [orderHomeGroups] 按持久化锚点插回用户拖到的位置。
  *
  * 一个分类都没有时返回空列表——首页保持原来的平铺列表，不给没建过分类的用户平白加一层目录。
  */
@@ -521,13 +758,83 @@ private fun buildCategoryGroups(items: List<HomeItem>, categories: List<Category
     return groups
 }
 
-/** 分组标题：文件夹图标 + 名称 + 数量 + 展开/收起箭头，整行可点。 */
+/**
+ * 按持久化锚点把「未分类」插回分类序列。
+ *
+ * anchor 为 null 表示用户从未拖过，维持原来的「固定最后」；
+ * 空串表示排最前；其余值是紧邻其前的分类 id。
+ * 空分类虽然不显示，但也在 [allCategoryIds] 里参与定位——它变空/恢复时，
+ * 「未分类」相对其它可见分组的位置才不会乱跳。
+ */
+internal fun orderHomeGroups(
+    groups: List<HomeGroup>,
+    allCategoryIds: List<String>,
+    anchor: String?
+): List<HomeGroup> {
+    if (groups.none { it.key == UNGROUPED_KEY }) return groups
+    val orderedKeys = allCategoryIds.toMutableList()
+    val insertAt = when {
+        anchor == null -> orderedKeys.size
+        anchor.isEmpty() -> 0
+        else -> orderedKeys.indexOf(anchor).let { if (it < 0) orderedKeys.size else it + 1 }
+    }
+    orderedKeys.add(insertAt, UNGROUPED_KEY)
+    val byKey = groups.associateBy { it.key }
+    return orderedKeys.mapNotNull(byKey::get)
+}
+
+/**
+ * 由可视分组顺序推导「未分类」的锚点：紧邻其前的分类 id；排在最前时为空串。
+ * 顺序里没有「未分类」时也返回空串——调用方在它不可见时不应写锚点。
+ */
+internal fun ungroupedAnchorOf(order: List<String>): String {
+    val index = order.indexOf(UNGROUPED_KEY)
+    return if (index <= 0) "" else order[index - 1]
+}
+
+/** 按拖动期间的本地顺序重排分组；不在本地顺序里的分组保持末尾。 */
+internal fun applyGroupOrder(groups: List<HomeGroup>, order: List<String>?): List<HomeGroup> {
+    if (order == null) return groups
+    val byKey = groups.associateBy { it.key }
+    val ordered = order.mapNotNull(byKey::get)
+    val known = order.toSet()
+    return ordered + groups.filter { it.key !in known }
+}
+
+/**
+ * 把可视分组的顺序合并进全部分类。
+ *
+ * 空分类在首页不显示，但仍占着分类列表里的位置：合并时保持它们原位，
+ * 只重排当前可见的那些，避免拖动后空分类被挤到别处。
+ */
+internal fun mergeCategoryOrder(allIds: List<String>, visibleOrder: List<String>): List<String> {
+    val visible = visibleOrder.filter { it in allIds }
+    if (visible.isEmpty()) return allIds
+    val visibleSet = visible.toSet()
+    var index = 0
+    return allIds.map { id -> if (id in visibleSet) visible[index++] else id }
+}
+
+/** 分组标题：文件夹图标 + 名称 + 数量 + 展开/收起箭头，整行可点；长按可拖动排序。 */
 @Composable
-private fun GroupHeader(group: HomeGroup, collapsed: Boolean, onToggle: () -> Unit) {
+private fun GroupHeader(
+    group: HomeGroup,
+    collapsed: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    dragging: Boolean = false
+) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
+            .then(
+                if (dragging) {
+                    Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
+                } else {
+                    Modifier
+                }
+            )
             .clickable(onClick = onToggle)
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically

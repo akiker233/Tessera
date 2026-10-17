@@ -7,17 +7,22 @@ import com.tessera.otp.data.prefs.SettingsRepository
 import com.tessera.otp.data.repo.Account
 import com.tessera.otp.data.repo.AccountRepository
 import com.tessera.otp.domain.CodeFormatter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** 首页显示开关。 */
 data class DisplayFlags(
@@ -48,6 +53,10 @@ data class HomeUiState(
     val selectedCategoryId: String? = null,
     val query: String = "",
     val flags: DisplayFlags = DisplayFlags(),
+    /** 已收起的分组 key（分类 id 或「未分类」），来自设置、跨重启保持。 */
+    val collapsedGroupKeys: Set<String> = emptySet(),
+    /** 「未分类」的位置锚点：null = 末尾（从未拖过），"" = 最前，其余为前一个分类 id。 */
+    val ungroupedGroupAnchor: String? = null,
     val loading: Boolean = true
 )
 
@@ -60,6 +69,7 @@ class HomeViewModel(
     private val query = MutableStateFlow("")
     private val selectedCategory = MutableStateFlow<String?>(null)
     private val categories = MutableStateFlow<List<CategoryEntity>>(emptyList())
+    private val collapseMutex = Mutex()
 
     /** 每秒 tick，驱动倒计时与"下一令牌"。 */
     private val ticker = flow {
@@ -70,12 +80,15 @@ class HomeViewModel(
         }
     }
 
-    private val accounts = combine(query, selectedCategory) { q, category -> q.trim() to category }
-        .flatMapLatest { pair ->
-            val q = pair.first
-            val category = pair.second
-            val source = if (q.isEmpty()) repository.observeActive() else repository.search(q)
-            if (category == null) source else source.map { list -> list.filter { it.entity.categoryId == category } }
+    private val accounts = query
+        .map { it.trim() }
+        .flatMapLatest { q ->
+            if (q.isEmpty()) repository.observeActive() else repository.search(q)
+        }
+        // 分类切换只在内存里过滤：重订阅 observeActive() 会把整库条目重新解密一遍，
+        // 每条密钥都要走一次 Keystore，点一下分类就能卡住主线程。
+        .combine(selectedCategory) { list, category ->
+            if (category == null) list else list.filter { it.entity.categoryId == category }
         }
 
     val uiState: StateFlow<HomeUiState> = combine(
@@ -111,9 +124,14 @@ class HomeViewModel(
                 nextTokenThresholdSeconds = appSettings.nextTokenThresholdSeconds,
                 dynamicColor = appSettings.dynamicColor
             ),
+            collapsedGroupKeys = appSettings.collapsedGroups,
+            ungroupedGroupAnchor = appSettings.ungroupedGroupAnchor,
             loading = false
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
+    }
+        // 出码（HMAC）与列表映射都放到后台：分类切换和每秒 tick 都不再占用主线程
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
 
     init {
         viewModelScope.launch {
@@ -139,5 +157,42 @@ class HomeViewModel(
 
     fun moveToTrash(id: String) {
         viewModelScope.launch { repository.moveToTrash(id) }
+    }
+
+    /**
+     * 记住某个分组的展开/收起状态。
+     *
+     * 串行化读取-写入：连续点两个分组时，若都基于同一份旧集合写回，后一次会把前一次覆盖掉。
+     */
+    fun toggleGroupCollapsed(key: String) {
+        viewModelScope.launch {
+            collapseMutex.withLock {
+                val current = settings.settings.first().collapsedGroups
+                settings.setCollapsedGroups(if (key in current) current - key else current + key)
+            }
+        }
+    }
+
+    /**
+     * 首页拖动文件夹后提交新的分组顺序（含「未分类」）。
+     *
+     * 分类顺序仍按 id 写回 sortOrder，与排序页共用；「未分类」不属于分类表，
+     * 单独记一个锚点（紧邻其前的分类）。空分类不显示但保持原位。
+     */
+    fun commitGroupOrder(orderedKeys: List<String>) {
+        if (orderedKeys.isEmpty()) return
+        viewModelScope.launch {
+            val all = repository.categories()
+            val byId = all.associateBy { it.id }
+            val currentIds = all.map { it.id }
+            val merged = mergeCategoryOrder(currentIds, orderedKeys)
+            if (merged != currentIds) {
+                repository.reorderCategories(merged.mapNotNull(byId::get))
+            }
+            // 「未分类」不可见时顺序里没有它，不能拿默认值把锚点冲掉
+            if (UNGROUPED_KEY in orderedKeys) {
+                settings.setUngroupedGroupAnchor(ungroupedAnchorOf(orderedKeys))
+            }
+        }
     }
 }
