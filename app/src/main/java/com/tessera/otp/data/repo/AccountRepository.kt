@@ -168,6 +168,17 @@ class AccountRepository(
         if (changed) notifyLocalChange()
     }
 
+    /**
+     * 只调整一组账号的内部顺序：这组成员仍占据它们在全局顺序中的原有槽位，
+     * 其它账号的位置不受影响。
+     *
+     * 首页在各分组内按全局 sortOrder 渲染，因此组成员的槽位顺序即组内顺序。
+     */
+    suspend fun reorderAccountsWithinGroup(orderedIds: List<String>) {
+        val merged = mergeGroupOrder(accountDao.active().map { it.id }, orderedIds) ?: return
+        reorderAccounts(merged)
+    }
+
     suspend fun moveToTrash(id: String) {
         accountDao.moveToTrash(id)
         notifyLocalChange()
@@ -297,19 +308,58 @@ class AccountRepository(
         runCatching { cipher.decrypt(encoded) }.getOrNull()?.takeIf { it.isNotEmpty() }
 
     /**
+     * 密文 → 明文缓存。
+     *
+     * 每次列表重发（同步写库、切换搜索等）都会把整表重新解密一遍，
+     * 缓存命中后只需一次查表；密文由随机 IV 保证「内容变 → 密文变」，不会读到旧明文。
+     */
+    private val secretCache = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, ByteArray>(64, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>) = size > 256
+        }
+    )
+
+    /**
      * 解密单个条目。
      *
      * 解不开时**绝不能抛**：条目一旦落库，首页每个 tick 都会读它，
      * 抛出就变成「一打开就崩、还来不及删」的死循环（实测两台中招）。
      */
     private fun decrypt(entity: AccountEntity): Account {
-        val secret = runCatching { cipher.decrypt(entity.secretEnc) }
-            .onFailure { Log.w(TAG, "密钥解密失败（多为旧格式同步包），条目降级为不可用 id=" + entity.id, it) }
-            .getOrDefault(ByteArray(0))
+        val secret = secretCache.getOrPut(entity.secretEnc) {
+            runCatching { cipher.decrypt(entity.secretEnc) }
+                .onFailure { Log.w(TAG, "密钥解密失败（多为旧格式同步包），条目降级为不可用 id=" + entity.id, it) }
+                .getOrDefault(ByteArray(0))
+        }
         return Account(entity = entity, secret = secret)
+    }
+
+    /**
+     * 启动预热：先把整表密钥解出来，首页首次查询就能直接命中缓存。
+     *
+     * 由 Application 在 IO 线程与首帧并行调用；与首页收集并发时，
+     * Keystore 解密最多做两遍（同一条重复解密无害），换取首屏等待时间更短。
+     */
+    suspend fun warmUp() {
+        accountDao.active().forEach(::decrypt)
     }
 
     private companion object {
         const val TAG = "AccountRepository"
     }
+}
+
+/**
+ * 把 [orderedIds] 的相对顺序写回它们在 [allIds] 中占据的槽位，返回合并后的完整顺序。
+ *
+ * 用于组内排序：组外账号的位置保持不变，组内成员按拖出的新顺序填回原槽位。
+ * [orderedIds] 含未知 id、重复 id 或少于两个成员时返回 null（调用方跳过写库）。
+ */
+internal fun mergeGroupOrder(allIds: List<String>, orderedIds: List<String>): List<String>? {
+    if (orderedIds.size < 2) return null
+    if (orderedIds.toSet().size != orderedIds.size) return null
+    val members = orderedIds.toHashSet()
+    if (!allIds.containsAll(members)) return null
+    val iterator = orderedIds.iterator()
+    return allIds.map { if (it in members) iterator.next() else it }
 }

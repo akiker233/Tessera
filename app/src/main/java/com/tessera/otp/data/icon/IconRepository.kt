@@ -11,21 +11,29 @@ import java.net.URLDecoder
 class IconRepository(private val context: Context) {
 
     private val json = Json { ignoreUnknownKeys = true }
-    private var entriesByKey: Map<String, IconEntry> = emptyMap()
-    private var loaded = false
-    private var error: String? = null
+    @Volatile private var entriesByKey: Map<String, IconEntry> = emptyMap()
+    @Volatile private var loaded = false
+    @Volatile private var error: String? = null
 
     /** 索引加载失败原因（assets 缺失/JSON 损坏时非空，UI 可提示但不应崩溃）。 */
     val loadError: String? get() = error
 
+    /** 启动时在 IO 线程预热，避免首帧在 100KB+ 的索引解析上卡一下。 */
+    fun preload() = ensureLoaded()
+
     private fun ensureLoaded() {
         if (loaded) return
-        loaded = true
-        try {
-            val raw = context.assets.open(INDEX_ASSET).bufferedReader().use { it.readText() }
-            entriesByKey = json.decodeFromString(IconIndex.serializer(), raw).icons
-        } catch (t: Throwable) {
-            error = t.message ?: t::class.java.simpleName
+        synchronized(this) {
+            if (loaded) return
+            try {
+                val raw = context.assets.open(INDEX_ASSET).bufferedReader().use { it.readText() }
+                entriesByKey = json.decodeFromString(IconIndex.serializer(), raw).icons
+            } catch (t: Throwable) {
+                error = t.message ?: t::class.java.simpleName
+            } finally {
+                // 失败也标记已加载，避免每次取图标都重试读取/解析
+                loaded = true
+            }
         }
     }
 

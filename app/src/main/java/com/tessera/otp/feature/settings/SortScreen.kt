@@ -44,33 +44,38 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import coil3.compose.AsyncImage
+import com.tessera.otp.data.icon.IconRepository
 import com.tessera.otp.ui.LetterAvatar
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 /**
- * 排序页：分类文件夹与验证码共用一个列表，各自区块内拖动右侧手柄调整顺序。
+ * 排序页：上半部分拖动分类文件夹调整首页分组顺序；
+ * 下半部分按分组列出验证码，拖动只调整所属分组内的顺序，不跨组移动。
  *
  * 拖动过程中只改界面本地列表，松手时才写库；因此一次拖动跨过多行也只产生一次落库。
- * 两个区块互相隔离（分类不会拖进验证码区，反之亦然）。
+ * 两个区块互相隔离（分类不会拖进验证码区，验证码也不会跨分组换位）。
  */
 @Composable
 fun SortScreen(
     state: SortUiState,
+    icons: IconRepository,
     onCommitCategories: (List<String>) -> Unit,
-    onCommitAccounts: (List<String>) -> Unit,
+    onCommitAccountGroup: (List<String>) -> Unit,
     onBack: () -> Unit
 ) {
     BackHandler(onBack = onBack)
 
     var categories by remember { mutableStateOf(state.categories) }
-    var accounts by remember { mutableStateOf(state.accounts) }
-    // 松手提交后数据库会把新顺序推回来；id 集合不变时保留本地顺序，避免列表闪回旧位置
+    var accountGroups by remember { mutableStateOf(state.accountGroups) }
+    // 松手提交后数据库会把新顺序推回来；条目集合不变时保留本地顺序，避免列表闪回旧位置
     LaunchedEffect(state.categories) { categories = mergeOrder(categories, state.categories, SortCategory::id) }
-    LaunchedEffect(state.accounts) { accounts = mergeOrder(accounts, state.accounts, SortAccount::id) }
+    LaunchedEffect(state.accountGroups) { accountGroups = mergeAccountGroups(accountGroups, state.accountGroups) }
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -78,31 +83,46 @@ fun SortScreen(
     var dragOffset by remember { mutableFloatStateOf(0f) }
     var autoScrolling by remember { mutableStateOf(false) }
 
-    fun swap(draggedId: String, targetId: String, isCategory: Boolean): Boolean {
-        return if (isCategory) {
-            val from = categories.indexOfFirst { it.id == draggedId }
-            val to = categories.indexOfFirst { it.id == targetId }
-            if (from < 0 || to < 0) return false
-            categories = categories.toMutableList().apply { add(to, removeAt(from)) }
-            true
-        } else {
-            val from = accounts.indexOfFirst { it.id == draggedId }
-            val to = accounts.indexOfFirst { it.id == targetId }
-            if (from < 0 || to < 0) return false
-            accounts = accounts.toMutableList().apply { add(to, removeAt(from)) }
-            true
-        }
+    fun swapCategory(draggedId: String, targetId: String): Boolean {
+        val from = categories.indexOfFirst { it.id == draggedId }
+        val to = categories.indexOfFirst { it.id == targetId }
+        if (from < 0 || to < 0) return false
+        categories = categories.toMutableList().apply { add(to, removeAt(from)) }
+        return true
     }
 
-    fun finishDrag(isCategory: Boolean, key: String) {
+    fun swapAccount(draggedId: String, targetId: String, groupKey: String): Boolean {
+        val groupIndex = accountGroups.indexOfFirst { it.key == groupKey }
+        if (groupIndex < 0) return false
+        val list = accountGroups[groupIndex].accounts
+        val from = list.indexOfFirst { it.id == draggedId }
+        val to = list.indexOfFirst { it.id == targetId }
+        if (from < 0 || to < 0) return false
+        val reordered = list.toMutableList().apply { add(to, removeAt(from)) }
+        accountGroups = accountGroups.toMutableList().apply {
+            this[groupIndex] = this[groupIndex].copy(accounts = reordered)
+        }
+        return true
+    }
+
+    fun finishDrag(isCategory: Boolean, key: String, groupKey: String?) {
         if (draggingKey != key) return
         draggingKey = null
         dragOffset = 0f
-        if (isCategory) onCommitCategories(categories.map { it.id })
-        else onCommitAccounts(accounts.map { it.id })
+        if (isCategory) {
+            onCommitCategories(categories.map { it.id })
+        } else {
+            val ids = accountGroups.firstOrNull { it.key == groupKey }?.accounts?.map { it.id }.orEmpty()
+            if (ids.isNotEmpty()) onCommitAccountGroup(ids)
+        }
     }
 
-    fun dragModifier(key: String, prefix: String, isCategory: Boolean): Modifier = Modifier.pointerInput(key) {
+    fun dragModifier(
+        key: String,
+        prefix: String,
+        isCategory: Boolean,
+        groupKey: String? = null
+    ): Modifier = Modifier.pointerInput(key) {
         detectDragGestures(
             onDragStart = {
                 draggingKey = key
@@ -126,7 +146,12 @@ fun SortScreen(
                     // 中心重叠过半才交换，避免轻微抖动就换位
                     if (abs(targetCenter - center) < (info.size + candidate.size) / 4f) {
                         val targetKey = candidate.key as String
-                        if (swap(key.removePrefix(prefix), targetKey.removePrefix(prefix), isCategory)) {
+                        val swapped = if (isCategory) {
+                            swapCategory(key.removePrefix(prefix), targetKey.removePrefix(prefix))
+                        } else {
+                            swapAccount(key.removePrefix(prefix), targetKey.removePrefix(prefix), groupKey.orEmpty())
+                        }
+                        if (swapped) {
                             // 交换后列表中该行的基准位置变了，补偿位移才能让它继续跟着手指
                             dragOffset += if (candidate.offset > info.offset) -candidate.size else candidate.size
                         }
@@ -153,8 +178,8 @@ fun SortScreen(
                     }
                 }
             },
-            onDragEnd = { finishDrag(isCategory, key) },
-            onDragCancel = { finishDrag(isCategory, key) }
+            onDragEnd = { finishDrag(isCategory, key, groupKey) },
+            onDragCancel = { finishDrag(isCategory, key, groupKey) }
         )
     }
 
@@ -186,7 +211,7 @@ fun SortScreen(
         ) {
             item(key = "hint") {
                 Text(
-                    text = "按住每行右侧的手柄上下拖动，松手即保存。",
+                    text = "按住每行右侧的手柄上下拖动，松手即保存。分类调整首页分组顺序；验证码只在所属分组内换位。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 4.dp)
@@ -246,7 +271,7 @@ fun SortScreen(
                     modifier = Modifier.padding(start = 4.dp, top = 16.dp)
                 )
             }
-            if (accounts.isEmpty()) {
+            if (accountGroups.isEmpty()) {
                 item(key = "empty:accounts") {
                     Text(
                         text = "还没有验证码。",
@@ -256,27 +281,76 @@ fun SortScreen(
                     )
                 }
             } else {
-                items(accounts, key = { "acc:" + it.id }) { account ->
-                    val key = "acc:" + account.id
-                    val dragging = draggingKey == key
-                    val subtitle = listOfNotNull(
-                        account.accountName.takeIf { it.isNotBlank() },
-                        account.categoryName ?: "未分类"
-                    ).joinToString(" · ")
-                    SortRow(
-                        title = account.issuer,
-                        subtitle = subtitle,
-                        leading = { LetterAvatar(seed = account.issuer, size = 32.dp) },
-                        handleModifier = dragModifier(key, "acc:", isCategory = false),
-                        modifier = Modifier
-                            .zIndex(if (dragging) 1f else 0f)
-                            .graphicsLayer {
-                                if (dragging) {
-                                    translationY = dragOffset
-                                    shadowElevation = 12.dp.toPx()
-                                }
+                accountGroups.forEach { group ->
+                    item(key = "group:" + group.key) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 4.dp, end = 4.dp, top = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (group.colorArgb != null) {
+                                Box(
+                                    Modifier
+                                        .size(10.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(group.colorArgb))
+                                )
+                                Spacer(Modifier.width(8.dp))
                             }
-                    )
+                            Text(
+                                text = group.name,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = group.accounts.size.toString(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    val prefix = "acc:" + group.key + ":"
+                    items(group.accounts, key = { prefix + it.id }) { account ->
+                        val key = prefix + account.id
+                        val dragging = draggingKey == key
+                        SortRow(
+                            title = account.issuer,
+                            subtitle = account.accountName.takeIf { it.isNotBlank() },
+                            leading = {
+                                val path = remember(account.id, account.iconKey, account.issuer) {
+                                    icons.assetPath(account.issuer, account.iconKey, preferLight = false)
+                                }
+                                if (path != null) {
+                                    AsyncImage(
+                                        model = "file:///android_asset/" + path,
+                                        contentDescription = null,
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(RoundedCornerShape(10.dp)),
+                                        contentScale = ContentScale.Fit
+                                    )
+                                } else {
+                                    LetterAvatar(seed = account.issuer, size = 32.dp)
+                                }
+                            },
+                            handleModifier = dragModifier(
+                                key = key,
+                                prefix = prefix,
+                                isCategory = false,
+                                groupKey = group.key
+                            ),
+                            modifier = Modifier
+                                .zIndex(if (dragging) 1f else 0f)
+                                .graphicsLayer {
+                                    if (dragging) {
+                                        translationY = dragOffset
+                                        shadowElevation = 12.dp.toPx()
+                                    }
+                                }
+                        )
+                    }
                 }
             }
         }
@@ -286,7 +360,7 @@ fun SortScreen(
 @Composable
 private fun SortRow(
     title: String,
-    subtitle: String,
+    subtitle: String?,
     leading: @Composable () -> Unit,
     handleModifier: Modifier,
     modifier: Modifier = Modifier
@@ -311,13 +385,15 @@ private fun SortRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
             Box(
                 modifier = Modifier
@@ -331,6 +407,29 @@ private fun SortRow(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+    }
+}
+
+/**
+ * 外部数据刷新时保留本地拖出的顺序：分组集合不变时只更新字段、沿用当前组内顺序；
+ * 分组增删或成员变化才整体采用新数据。
+ */
+private fun mergeAccountGroups(
+    current: List<SortAccountGroup>,
+    incoming: List<SortAccountGroup>
+): List<SortAccountGroup> {
+    if (current.map { it.key } != incoming.map { it.key }) return incoming
+    val currentByKey = current.associateBy { it.key }
+    return incoming.map { next ->
+        val previous = currentByKey[next.key] ?: return@map next
+        val previousIds = previous.accounts.map { it.id }
+        val incomingIds = next.accounts.map { it.id }
+        if (previousIds.size != incomingIds.size || previousIds.toSet() != incomingIds.toSet()) {
+            next
+        } else {
+            val byId = next.accounts.associateBy { it.id }
+            next.copy(accounts = previousIds.mapNotNull(byId::get))
         }
     }
 }

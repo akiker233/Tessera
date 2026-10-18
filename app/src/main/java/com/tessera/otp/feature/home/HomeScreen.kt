@@ -17,6 +17,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -94,6 +96,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.text
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -104,6 +107,7 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import android.widget.Toast
+import com.tessera.otp.R
 import com.tessera.otp.data.db.entity.CategoryEntity
 import com.tessera.otp.data.icon.IconRepository
 import com.tessera.otp.data.prefs.ListDensity
@@ -135,6 +139,8 @@ fun HomeScreen(
     /** 首页拖动文件夹后提交新的分组顺序（含「未分类」）。 */
     onReorderGroups: (List<String>) -> Unit = {},
     density: ListDensity = ListDensity.DEFAULT,
+    /** 递增即请求列表回到顶部（点标题或底部「验证码」时触发）。 */
+    scrollToTopRequest: Int = 0,
     contentPadding: androidx.compose.foundation.layout.PaddingValues = androidx.compose.foundation.layout.PaddingValues(0.dp)
 ) {
     val context = LocalContext.current
@@ -187,6 +193,10 @@ fun HomeScreen(
     }
 
     BackHandler(enabled = searchExpanded) { collapseSearch() }
+
+    LaunchedEffect(scrollToTopRequest) {
+        if (scrollToTopRequest > 0) listState.animateScrollToItem(0)
+    }
 
     val latestStatus by rememberUpdatedState(syncStatus)
     LaunchedEffect(pulled, syncing) {
@@ -245,7 +255,12 @@ fun HomeScreen(
                             }
                         )
                     } else {
-                        Text("验证码")
+                        Text(
+                            text = stringResource(R.string.app_name),
+                            modifier = Modifier.clickable {
+                                scope.launch { listState.animateScrollToItem(0) }
+                            }
+                        )
                     }
                 },
                 actions = {
@@ -277,22 +292,24 @@ fun HomeScreen(
         ) {
             if (state.categories.isNotEmpty()) {
                 Row(
+                    // 横向滚动给子项无限宽度：分类多时 chip 不再被压扁换行，行高保持一行
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     FilterChip(
                         selected = state.selectedCategoryId == null,
                         onClick = { onCategorySelected(null) },
-                        label = { Text("全部") }
+                        label = { Text("全部", maxLines = 1, softWrap = false) }
                     )
                     state.categories.forEach { category ->
                         FilterChip(
                             selected = state.selectedCategoryId == category.id,
                             onClick = { onCategorySelected(category.id) },
-                            label = { Text(category.name) },
+                            label = { Text(category.name, maxLines = 1, softWrap = false) },
                             leadingIcon = {
                                 Box(
                                     modifier = Modifier

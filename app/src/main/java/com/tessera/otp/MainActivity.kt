@@ -317,6 +317,8 @@ private fun AppShell(
     val timeStatus by model.timeStatus.collectAsStateWithLifecycle()
     var sheet by remember { mutableStateOf(false) }
     var showGuide by remember { mutableStateOf(false) }
+    // 已在首页时再点底部「验证码」：不发导航，只递增该计数让首页滚回顶部
+    var homeScrollTopTick by remember { mutableStateOf(0) }
     val justPaired by model.justPaired.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -418,14 +420,16 @@ private fun AppShell(
     )
 
     Scaffold(
-        // 顶部不再重复显示应用名：各页面自带标题（首页为“验证码”）
+        // 顶部不再重复显示应用名：各页面自带标题（首页为“凭牌”）
         topBar = {},
         bottomBar = {
             if (screen is Screen.Home || trashTab || settingsTab) {
                 NavigationBar {
                     NavigationBarItem(
                         selected = screen is Screen.Home,
-                        onClick = { model.navigate(Screen.Home) },
+                        onClick = {
+                            if (screen is Screen.Home) homeScrollTopTick++ else model.navigate(Screen.Home)
+                        },
                         icon = { Icon(Icons.Filled.Lock, contentDescription = null) },
                         label = { Text("验证码") }
                     )
@@ -462,7 +466,8 @@ private fun AppShell(
                     onRefresh = model.sync::runManualSync,
                     onToggleGroupCollapsed = model.home::toggleGroupCollapsed,
                     onReorderGroups = model.home::commitGroupOrder,
-                    density = runCatching { ListDensity.valueOf(settings?.listDensity ?: ListDensity.DEFAULT.name) }.getOrDefault(ListDensity.DEFAULT)
+                    density = runCatching { ListDensity.valueOf(settings?.listDensity ?: ListDensity.DEFAULT.name) }.getOrDefault(ListDensity.DEFAULT),
+                    scrollToTopRequest = homeScrollTopTick
                 )
 
                 is Screen.Trash -> TrashScreen(
@@ -588,8 +593,9 @@ private fun AppShell(
                     val sortState by model.sort.state.collectAsStateWithLifecycle()
                     SortScreen(
                         state = sortState,
+                        icons = container.icons,
                         onCommitCategories = model.sort::commitCategories,
-                        onCommitAccounts = model.sort::commitAccounts,
+                        onCommitAccountGroup = model.sort::commitAccountGroup,
                         onBack = model::back
                     )
                 }

@@ -182,7 +182,7 @@ fun SettingsScreen(
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             ChoiceRow(
                 title = "排序",
-                subtitle = "拖动调整分类文件夹与验证码的显示顺序",
+                subtitle = "拖动调整分类文件夹顺序，以及各分类内的验证码顺序",
                 icon = Icons.Filled.SwapVert,
                 onClick = actions.onOpenSort
             )

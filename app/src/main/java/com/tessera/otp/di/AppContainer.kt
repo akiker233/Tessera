@@ -42,8 +42,8 @@ class AppContainer(private val context: Context) {
     @Volatile private var database: AppDatabase? = null
     @Volatile private var repository: AccountRepository? = null
 
-    private fun db(): AppDatabase = database ?: synchronized(this) {
-        database ?: AppDatabase.build(context, DatabasePassphrase.get(context)).also { database = it }
+    private fun db(passphrase: ByteArray): AppDatabase = database ?: synchronized(this) {
+        database ?: AppDatabase.build(context, passphrase).also { database = it }
     }
 
 
@@ -65,8 +65,18 @@ class AppContainer(private val context: Context) {
             )
         }.getOrDefault(com.tessera.otp.data.prefs.SyncInterval.OFF)
 
-    suspend fun accountRepository(): AccountRepository =
-        repository ?: withContext(Dispatchers.IO) {
-            repository ?: AccountRepository(db().accountDao(), db().categoryDao(), cipher).also { repository = it }
+    suspend fun accountRepository(): AccountRepository {
+        repository?.let { return it }
+        return withContext(Dispatchers.IO) {
+            // Application 预热与 MainViewModel 可能同时进来，用锁保证库只打开一次
+            synchronized(this@AppContainer) {
+                repository ?: run {
+                    val database = db(DatabasePassphrase.get(context))
+                    // 先真正打开库：SQLCipher 的 KDF 是启动大头，留在首次查询时会拖慢首屏
+                    database.openHelper.writableDatabase
+                    AccountRepository(database.accountDao(), database.categoryDao(), cipher).also { repository = it }
+                }
+            }
         }
+    }
 }

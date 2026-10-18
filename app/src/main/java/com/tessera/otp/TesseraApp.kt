@@ -20,9 +20,17 @@ class TesseraApp : Application() {
         super.onCreate()
         container = AppContainer(this)
 
+        val io = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
+        // 与首帧并行：提前打开 SQLCipher 库并解出密钥，首页首次查询直接命中缓存
+        io.launch {
+            runCatching { container.accountRepository().warmUp() }
+                .onFailure { Log.w(TAG, "启动预热失败", it) }
+        }
+        // 图标索引约 100KB+，别留到首帧在主线程序列化
+        io.launch { container.icons.preload() }
         // 网络校时：先恢复上次偏移，再在后台静默重新校准（失败即退化为系统时间）
         com.tessera.otp.data.time.NetworkTime.init(this)
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+        io.launch {
             com.tessera.otp.data.time.NetworkTime.sync()
         }
         container.workScheduler = { interval -> com.tessera.otp.sync.SyncWorker.schedule(this, interval) }

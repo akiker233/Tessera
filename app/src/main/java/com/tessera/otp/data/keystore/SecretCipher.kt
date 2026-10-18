@@ -36,7 +36,20 @@ class SecretCipher {
         return cipher.doFinal(ct)
     }
 
-    private fun masterKey(): SecretKey {
+    /**
+     * 主密钥只从 Keystore 取一次。
+     *
+     * 每次解密都重新 load KeyStore + getEntry 会为每条密钥付一次 IPC，
+     * 几十条账号累计就是几百毫秒；SecretKey 只是 Keystore 句柄，可安全复用。
+     */
+    @Volatile private var cachedKey: SecretKey? = null
+
+    private fun masterKey(): SecretKey =
+        cachedKey ?: synchronized(this) {
+            cachedKey ?: loadOrCreateKey().also { cachedKey = it }
+        }
+
+    private fun loadOrCreateKey(): SecretKey {
         val ks = KeyStore.getInstance(KEYSTORE).apply { load(null) }
         (ks.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE)

@@ -83,9 +83,13 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
                 if (stored.autoLockEnabled) container.settings.setAutoLockEnabled(false)
                 if (stored.biometricEnabled) container.settings.setBiometricEnabled(false)
             }
-            // 冷启动静默跑一次同步（口令/后端没配好会直接返回，不弹任何提示）；
-            // 账号数据一变也静默同步一次，同步自身写库不会触发（见 AccountRepository.muted）
-            sync.requestAutoSync()
+            // 冷启动静默同步稍后再跑：它会整表读库、解密密钥并可能回写，
+            // 立刻启动会与首屏查询/解密抢 IO，把出码时间往后推。
+            // 账号数据一变仍立即同步（下面的 localChanges），不受这里的延迟影响。
+            viewModelScope.launch {
+                kotlinx.coroutines.delay(COLD_START_SYNC_DELAY_MS)
+                sync.requestAutoSync()
+            }
             val repo = requireRepository()
             repo.localChanges.collect { sync.requestAutoSync() }
         }
@@ -295,6 +299,9 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     companion object {
+        /** 冷启动静默同步的延迟：让首屏先完成查询与出码。 */
+        private const val COLD_START_SYNC_DELAY_MS = 2_000L
+
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer { MainViewModel(container) }
         }
