@@ -112,9 +112,9 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
         com.tessera.otp.feature.settings.SortViewModel(requireRepository())
     }
 
-    /** 检查更新（关于页）；不依赖本地仓库，随时可用。 */
+    /** 检查更新（冷启动自动检查 + 关于页）；不依赖本地仓库，随时可用。 */
     val update: com.tessera.otp.feature.settings.UpdateViewModel by lazy {
-        com.tessera.otp.feature.settings.UpdateViewModel()
+        com.tessera.otp.feature.settings.UpdateViewModel(container.appContext)
     }
 
     /** 同步页 ViewModel；周期任务由 Activity 注入的 scheduler 注册。 */

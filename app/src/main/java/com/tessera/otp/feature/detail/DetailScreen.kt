@@ -3,6 +3,8 @@ package com.tessera.otp.feature.detail
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -77,6 +79,7 @@ data class DetailForm(
  * 服务名称（右侧图标选择）、密钥（可显隐）、可折叠的「其他设置」，
  * 以及「高级令牌设置」（Type / 算法 / 刷新时间 / 位数，右侧上下箭头调节）。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DetailScreen(
     form: DetailForm,
@@ -191,7 +194,13 @@ fun DetailScreen(
                 modifier = Modifier.fillMaxWidth()
             )
             Text("分类", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // 分类多时换行排列；普通 Row 会把最后的 chip 挤成竖排文字
+            // 并把它撑成整行高度，留下大片空白
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 FilterChip(
                     selected = form.categoryId == null,
                     onClick = { onFormChange(form.copy(categoryId = null)) },

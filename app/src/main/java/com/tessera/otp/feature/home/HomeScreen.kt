@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -224,8 +225,12 @@ fun HomeScreen(
     }
 
     Scaffold(
+        // 外层 AppShell 的 Scaffold 已把状态栏/导航栏 inset 计入内容 padding；
+        // 内层再吃一次会让顶栏上方多出整整一条状态栏的空白
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
+                windowInsets = WindowInsets(0, 0, 0, 0),
                 navigationIcon = {
                     if (searchExpanded) {
                         IconButton(onClick = { collapseSearch() }) {

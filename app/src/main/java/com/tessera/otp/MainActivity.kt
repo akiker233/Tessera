@@ -88,6 +88,7 @@ import com.tessera.otp.feature.settings.SettingsActions
 import com.tessera.otp.feature.settings.SettingsScreen
 import com.tessera.otp.feature.settings.SettingsSubRoute
 import com.tessera.otp.feature.settings.AboutScreen
+import com.tessera.otp.feature.settings.UpdateAvailableDialog
 import com.tessera.otp.feature.settings.CategoryManageScreen
 import com.tessera.otp.feature.settings.CategoryAssignScreen
 import com.tessera.otp.feature.settings.SortScreen
@@ -320,6 +321,7 @@ private fun AppShell(
     // 已在首页时再点底部「验证码」：不发导航，只递增该计数让首页滚回顶部
     var homeScrollTopTick by remember { mutableStateOf(0) }
     val justPaired by model.justPaired.collectAsStateWithLifecycle()
+    val updateState by model.update.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -390,6 +392,12 @@ private fun AppShell(
             throttleSecondsProvider = { model.throttleSeconds() }
         )
         return
+    }
+
+    // 冷启动自动检查更新（解锁后进行）；只有发现新版才会弹窗，失败静默
+    LaunchedEffect(Unit) { model.update.autoCheck() }
+    updateState.autoUpdate?.let { info ->
+        UpdateAvailableDialog(info = info, onDismiss = model.update::dismissAuto)
     }
 
     val current = settings
@@ -501,7 +509,6 @@ private fun AppShell(
                 }
 
                 is Screen.About -> {
-                    val updateState by model.update.state.collectAsStateWithLifecycle()
                     AboutScreen(
                         updateState = updateState,
                         onCheckUpdate = model.update::check,

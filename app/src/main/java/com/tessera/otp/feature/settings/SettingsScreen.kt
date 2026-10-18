@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -68,6 +69,7 @@ import com.tessera.otp.data.prefs.AutoLockDelay
 import com.tessera.otp.data.prefs.ListDensity
 import com.tessera.otp.data.prefs.SyncInterval
 import com.tessera.otp.data.prefs.ThemeMode
+import com.tessera.otp.data.update.UpdateInfo
 
 /** 设置页回调：所有持久化都交给 MainActivity 里的 AppContainer。 */
 data class SettingsActions(
@@ -265,6 +267,48 @@ fun AboutScreen(
             )
         }
 
+        if (updateState.history.isNotEmpty()) {
+            SectionTitle("更新日志")
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Column {
+                    updateState.history.forEachIndexed { index, entry ->
+                        if (index > 0) HorizontalDivider()
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("v" + entry.version, style = MaterialTheme.typography.titleMedium)
+                                if (entry.version == BuildConfig.VERSION_NAME) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = "当前版本",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Spacer(Modifier.weight(1f))
+                                if (entry.date.isNotBlank()) {
+                                    Text(
+                                        text = entry.date,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Text(
+                                text = entry.notes,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
             Column {
                 InfoRow(title = "版本", value = BuildConfig.VERSION_NAME + "（build " + BuildConfig.VERSION_CODE + "）")
@@ -294,39 +338,37 @@ fun AboutScreen(
     }
 
     when (val dialog = updateState.dialog) {
-        is UpdateDialogState.Available -> AlertDialog(
-            onDismissRequest = onDismissUpdate,
-            title = { Text("发现新版本 " + dialog.info.latestVersion) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("当前版本 " + BuildConfig.VERSION_NAME + "，可更新到 " + dialog.info.latestVersion + "。")
-                    if (dialog.info.notes.isNotBlank()) {
-                        val notes = dialog.info.notes.trim()
-                        Text(
-                            text = notes.take(1200) + if (notes.length > 1200) "…" else "",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    onDismissUpdate()
-                    openHttps(context, dialog.info.downloadUrl ?: dialog.info.releaseUrl)
-                }) {
-                    Text(if (dialog.info.downloadUrl != null) "下载更新" else "前往下载")
-                }
-            },
-            dismissButton = { TextButton(onClick = onDismissUpdate) { Text("稍后") } }
+        is UpdateDialogState.Available -> UpdateAvailableDialog(
+            info = dialog.info,
+            onDismiss = onDismissUpdate
         )
 
-        is UpdateDialogState.UpToDate -> AlertDialog(
-            onDismissRequest = onDismissUpdate,
-            title = { Text("已是最新版本") },
-            text = { Text("当前版本 " + dialog.currentVersion + " 已是最新。") },
-            confirmButton = { TextButton(onClick = onDismissUpdate) { Text("好") } }
-        )
+        is UpdateDialogState.UpToDate -> {
+            val entry = updateState.history.firstOrNull { it.version == dialog.currentVersion }
+            AlertDialog(
+                onDismissRequest = onDismissUpdate,
+                title = { Text("已是最新版本") },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("当前版本 " + dialog.currentVersion + " 已是最新。")
+                        if (entry != null && entry.notes.isNotBlank()) {
+                            Text("本版本更新内容", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                text = entry.notes,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = onDismissUpdate) { Text("好") } }
+            )
+        }
 
         is UpdateDialogState.Failed -> AlertDialog(
             onDismissRequest = onDismissUpdate,
@@ -343,6 +385,46 @@ fun AboutScreen(
 
         null -> Unit
     }
+}
+
+/** 发现新版本弹窗：冷启动自动检查与关于页手动检查共用，正文可滚动。 */
+@Composable
+internal fun UpdateAvailableDialog(
+    info: UpdateInfo,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("发现新版本 " + info.latestVersion) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("当前版本 " + BuildConfig.VERSION_NAME + "，可更新到 " + info.latestVersion + "。")
+                if (info.notes.isNotBlank()) {
+                    Text("更新日志", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = info.notes.trim(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onDismiss()
+                openHttps(context, info.downloadUrl ?: info.releaseUrl)
+            }) {
+                Text(if (info.downloadUrl != null) "下载更新" else "前往下载")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("稍后") } }
+    )
 }
 
 private const val REPO_URL = "https://github.com/akiker233/Tessera"
